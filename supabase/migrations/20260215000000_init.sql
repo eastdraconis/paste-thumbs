@@ -8,7 +8,19 @@ create table if not exists public.meetings (
   created_at timestamptz not null default now()
 );
 
-create type if not exists attendance_status as enum ('참석', '불참', '보류');
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_type t
+    join pg_namespace n on n.oid = t.typnamespace
+    where t.typname = 'attendance_status'
+      and n.nspname = 'public'
+  ) then
+    create type public.attendance_status as enum ('참석', '불참', '보류');
+  end if;
+end
+$$;
 
 create table if not exists public.meeting_members (
   id uuid primary key default gen_random_uuid(),
