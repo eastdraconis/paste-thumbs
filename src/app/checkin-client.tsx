@@ -1,7 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import {
+  KeyboardEvent,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { useFieldArray, useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { signOut, useSession } from "next-auth/react";
 import { Attendance, Meeting } from "@/lib/checkin-types";
 
@@ -17,10 +25,8 @@ type ParsedMembers = {
   duplicates: string[];
 };
 
-type Attendee = {
-  id: string;
-  name: string;
-};
+type CheckinFormValues = z.infer<typeof checkinSchema>;
+
 
 const statusList: Attendance[] = ["참석", "불참", "보류"];
 
@@ -29,6 +35,19 @@ const STATUS_CHIP: Record<Attendance, string> = {
   불참: "bg-rose-100 text-rose-700 border-rose-200",
   보류: "bg-amber-100 text-amber-700 border-amber-200",
 };
+
+const checkinSchema = z.object({
+  title: z.string().trim().min(1, "모임 제목을 입력해 주세요."),
+  date: z.string().trim().min(1, "일시를 입력해 주세요."),
+  place: z.string().trim().optional(),
+  attendees: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1, "참석자 이름을 입력해 주세요."),
+      }),
+    )
+    .min(1, "최소 1명 이상의 참석자를 추가해 주세요."),
+});
 
 function attendanceStats(members: Meeting["members"]) {
   return members.reduce<Record<Attendance, number>>(
@@ -79,25 +98,41 @@ function parseMemberInput(value: string): ParsedMembers {
 export default function CheckinClient({ mode = "personal", ownerToken = "" }: CheckinClientProps) {
   const { data: session, status: sessionStatus } = useSession();
 
-  const [title, setTitle] = useState("");
-  const [date, setDate] = useState("");
-  const [place, setPlace] = useState("");
   const [memberInput, setMemberInput] = useState("");
-  const [memberItems, setMemberItems] = useState<Attendee[]>([]);
   const [memberInputMessage, setMemberInputMessage] = useState("");
   const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [isBusy, setIsBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [submitError, setSubmitError] = useState("");
   const [toast, setToast] = useState("");
   const [hasGoogleProvider, setHasGoogleProvider] = useState(false);
-  const [submitAttempted, setSubmitAttempted] = useState(false);
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting, isValid },
+    control,
+    getValues,
+  } = useForm<CheckinFormValues>({
+    resolver: zodResolver(checkinSchema),
+    defaultValues: {
+      title: "",
+      date: "",
+      place: "",
+      attendees: [],
+    },
+    mode: "onBlur",
+  });
+
+  const { fields, append, remove, replace } = useFieldArray({
+    control,
+    name: "attendees",
+  });
 
   const isSharedMode = mode === "shared";
   const isPersonalMode = mode === "personal";
   const canEdit = isSharedMode || sessionStatus === "authenticated";
 
-  const hasRequiredInputs = title.trim().length > 0 && date.trim().length > 0 && memberItems.length > 0;
-  const memberCount = memberItems.length;
+  const memberCount = fields.length;
 
   const allAttending = useMemo(
     () => meetings.filter((meeting) => meeting.members.every((m) => m.status === "참석")),
@@ -125,7 +160,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
         return;
       }
 
-      setError("");
+      setSubmitError("");
 
       try {
         const response = await fetch(buildApiUrl("/api/meetings", ownerToken, isSharedMode));
@@ -137,7 +172,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
 
         setMeetings(result);
       } catch {
-        setError("모임 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        setSubmitError("모임 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
       }
     };
 
@@ -145,18 +180,9 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     loadMeetings();
   }, [isPersonalMode, sessionStatus, ownerToken, isSharedMode]);
 
-  const createMemberId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-
-  const getMemberInputMessages = () => {
-    if (submitAttempted && memberCount === 0) {
-      return "최소 1명 이상의 참석자를 추가해 주세요.";
-    }
-
-    return memberInputMessage || `${memberCount}명 입력됨`;
-  };
-
   const addMembers = (rawValue: string) => {
     const parsed = parseMemberInput(rawValue);
+    const currentNames = new Set(fields.map((member) => member.name));
 
     if (parsed.names.length === 0) {
       setMemberInput("");
@@ -164,49 +190,35 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       return;
     }
 
-    const existingSet = new Set(memberItems.map((item) => item.name));
-    const newMembers = parsed.names.filter((name) => !existingSet.has(name));
-    const duplicateCount = parsed.names.length - newMembers.length;
+    const filteredNew = parsed.names.filter((name) => !currentNames.has(name));
+    const duplicateWithCurrent = parsed.names.length - filteredNew.length;
 
-    if (duplicateCount > 0) {
-      setMemberInputMessage(`${duplicateCount}명 중복은 제외되고 추가됐어요.`);
+    if (filteredNew.length > 0) {
+      append(filteredNew.map((name) => ({ name })));
+    }
+
+    if (duplicateWithCurrent > 0) {
+      setMemberInputMessage(`${duplicateWithCurrent}명은 이미 목록에 있어 제외했어요.`);
     } else {
-      setMemberInputMessage(`"${newMembers.length}명"이(가) 추가됐어요.`);
+      setMemberInputMessage(`"${filteredNew.length}명"이(가) 추가됐어요.`);
     }
 
-    if (newMembers.length === 0) {
-      setMemberInput("");
-      return;
-    }
-
-    setMemberItems((prev) => [
-      ...prev,
-      ...newMembers.map((name) => ({
-        id: createMemberId(),
-        name,
-      })),
-    ]);
     setMemberInput("");
-
     window.setTimeout(() => {
-      setMemberInputMessage((current) => (current.startsWith("중복") ? "" : current));
-    }, 1500);
+      setMemberInputMessage("");
+    }, 1200);
   };
 
-  const removeMember = (id: string) => {
-    setMemberItems((prev) => prev.filter((member) => member.id !== id));
-  };
-
-  const submitMeeting = async () => {
-    setSubmitAttempted(true);
-
-    if (!hasRequiredInputs) {
-      setError("필수 항목을 모두 입력해 주세요.");
-      return;
+  const getMemberInputMessage = () => {
+    if (submitError || errors.attendees?.message) {
+      return errors.attendees?.message ?? "";
     }
 
-    setIsBusy(true);
-    setError("");
+    return memberInputMessage || `${memberCount}명 입력됨`;
+  };
+
+  const submitMeeting = async (values: CheckinFormValues) => {
+    setSubmitError("");
 
     try {
       const response = await fetch("/api/meetings", {
@@ -215,10 +227,10 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          title: title.trim(),
-          date: date.trim(),
-          place: place.trim(),
-          members: memberItems.map((member) => member.name),
+          title: values.title.trim(),
+          date: values.date.trim(),
+          place: values.place?.trim() ?? "",
+          members: values.attendees.map((member) => member.name),
         }),
       });
 
@@ -229,33 +241,21 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       }
 
       setMeetings((prev) => [payload, ...prev]);
-      setTitle("");
-      setDate("");
-      setPlace("");
+      reset({ title: "", date: "", place: "", attendees: [] });
+      replace([]);
       setMemberInput("");
-      setMemberItems([]);
       setMemberInputMessage("");
-      setSubmitAttempted(false);
-      setToast(
-        "체크인 링크가 생성되었습니다. 새 카드의 '체크인 링크 복사'로 공유하세요.",
-      );
+      setToast("체크인 링크가 생성되었습니다. 새 카드의 '체크인 링크 복사'로 공유하세요.");
       setTimeout(() => {
         setToast("");
       }, 2200);
     } catch (e: unknown) {
       if (e instanceof Error) {
-        setError(e.message);
+        setSubmitError(e.message);
       } else {
-        setError("모임 생성에 실패했습니다.");
+        setSubmitError("모임 생성에 실패했습니다.");
       }
-    } finally {
-      setIsBusy(false);
     }
-  };
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    void submitMeeting();
   };
 
   const handleMemberKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -266,29 +266,29 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   };
 
   const resetDraft = () => {
-    setTitle("");
-    setDate("");
-    setPlace("");
+    reset({ title: "", date: "", place: "", attendees: [] });
+    replace([]);
     setMemberInput("");
-    setMemberItems([]);
     setMemberInputMessage("");
-    setSubmitAttempted(false);
-    setError("");
+    setSubmitError("");
   };
 
-  const isFormDirty =
-    title.trim().length > 0 ||
-    date.trim().length > 0 ||
-    place.trim().length > 0 ||
-    memberInput.trim().length > 0 ||
-    memberItems.length > 0;
+  const isFormDirty = useMemo(
+    () =>
+      getValues("title").trim().length > 0 ||
+      getValues("date").trim().length > 0 ||
+      (getValues("place") ?? "").trim().length > 0 ||
+      memberInput.trim().length > 0 ||
+      memberCount > 0,
+    [getValues, memberInput, memberCount],
+  );
 
   const updateStatus = async (meetingId: string, memberId: string, status: Attendance) => {
     if (!canEdit) {
       return;
     }
 
-    setError("");
+    setSubmitError("");
 
     try {
       const response = await fetch(buildApiUrl(`/api/meetings/${meetingId}`, ownerToken, isSharedMode), {
@@ -319,9 +319,9 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       );
     } catch (e: unknown) {
       if (e instanceof Error) {
-        setError(e.message);
+        setSubmitError(e.message);
       } else {
-        setError("상태 변경에 실패했습니다.");
+        setSubmitError("상태 변경에 실패했습니다.");
       }
     }
   };
@@ -422,23 +422,18 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
             <h2 className="text-lg font-semibold text-slate-900">새 체크인 만들기</h2>
             <p className="mt-1 text-sm text-slate-500">입력한 뒤 바로 링크를 전달해 참석 상태를 모아보세요.</p>
 
-            <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+            <form onSubmit={handleSubmit(submitMeeting)} className="mt-4 space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="space-y-1.5">
                   <span className="text-sm font-medium text-slate-700">
                     모임 제목 <span className="text-rose-500">*</span>
                   </span>
                   <input
-                    value={title}
-                    onChange={(event) => setTitle(event.currentTarget.value)}
+                    {...register("title")}
                     placeholder="예: 팀 회식"
-                    className={getInputClass(submitAttempted && !title.trim())}
+                    className={getInputClass(Boolean(errors.title))}
                   />
-                  {submitAttempted && !title.trim() ? (
-                    <p className="text-xs text-rose-600">모임 제목을 입력해 주세요.</p>
-                  ) : (
-                    <p className="text-xs text-slate-500">누가 어디서 모였는지 한 줄로 적어주세요.</p>
-                  )}
+                  <p className="text-xs text-rose-600">{errors.title?.message || "누가 어디서 모였는지 한 줄로 적어주세요."}</p>
                 </label>
 
                 <label className="space-y-1.5">
@@ -447,23 +442,17 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                   </span>
                   <input
                     type="datetime-local"
-                    value={date}
-                    onChange={(event) => setDate(event.currentTarget.value)}
-                    className={getInputClass(submitAttempted && !date.trim())}
+                    {...register("date")}
+                    className={getInputClass(Boolean(errors.date))}
                   />
-                  {submitAttempted && !date.trim() ? (
-                    <p className="text-xs text-rose-600">일시를 입력해 주세요.</p>
-                  ) : (
-                    <p className="text-xs text-slate-500">날짜와 시간을 한 번에 선택할 수 있습니다.</p>
-                  )}
+                  <p className="text-xs text-rose-600">{errors.date?.message || "날짜와 시간을 한 번에 선택할 수 있습니다."}</p>
                 </label>
               </div>
 
               <label className="space-y-1.5">
                 <span className="text-sm font-medium text-slate-700">장소</span>
                 <input
-                  value={place}
-                  onChange={(event) => setPlace(event.currentTarget.value)}
+                  {...register("place")}
                   placeholder="예: 서울 강남 OO카페"
                   className={inputClass}
                 />
@@ -475,9 +464,9 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                   참석자 <span className="text-rose-500">*</span>
                 </span>
 
-                {memberItems.length > 0 ? (
+                {memberCount > 0 ? (
                   <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2">
-                    {memberItems.map((member) => (
+                    {fields.map((member, index) => (
                       <span
                         key={member.id}
                         className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-white px-2.5 py-1 text-sm"
@@ -485,7 +474,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                         <span>{member.name}</span>
                         <button
                           type="button"
-                          onClick={() => removeMember(member.id)}
+                          onClick={() => remove(index)}
                           className="rounded-full px-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
                           aria-label={`${member.name} 삭제`}
                         >
@@ -501,10 +490,10 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                   onChange={(event) => setMemberInput(event.currentTarget.value)}
                   onKeyDown={handleMemberKeyDown}
                   placeholder="참석자 이름을 입력하고 엔터로 추가"
-                  className={`${getInputClass(submitAttempted && memberItems.length === 0)} resize-none`}
+                  className={`${getInputClass(Boolean(errors.attendees))} resize-none`}
                 />
                 <div className="flex flex-wrap items-start justify-between gap-2 text-xs text-slate-500">
-                  <p>{getMemberInputMessages()}</p>
+                  <p>{getMemberInputMessage()}</p>
                   <p className="whitespace-nowrap">(엔터로 추가)</p>
                 </div>
               </label>
@@ -512,16 +501,16 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
               <div className="flex flex-wrap gap-2">
                 <button
                   type="submit"
-                  disabled={sessionStatus !== "authenticated" || !hasRequiredInputs || isBusy}
+                  disabled={isSubmitting || !isValid}
                   className="rounded-full bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isBusy ? "저장 중..." : "체크인 만들기"}
+                  {isSubmitting ? "저장 중..." : "체크인 만들기"}
                 </button>
 
                 <button
                   type="button"
                   onClick={resetDraft}
-                  disabled={!isFormDirty || isBusy}
+                  disabled={!isFormDirty || isSubmitting}
                   className="rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   입력 초기화
@@ -531,7 +520,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
           </section>
         ) : null}
 
-        {error ? <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
+        {submitError ? <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">{submitError}</p> : null}
 
         <section className="grid gap-4">
           {meetings.length === 0 ? (
