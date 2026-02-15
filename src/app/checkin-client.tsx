@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { signIn, signOut, useSession } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import { Attendance, Meeting } from "@/lib/checkin-types";
 
 type ViewMode = "personal" | "shared";
@@ -43,6 +44,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState("");
+  const [toast, setToast] = useState("");
   const [hasGoogleProvider, setHasGoogleProvider] = useState(false);
 
   const isSharedMode = mode === "shared";
@@ -186,111 +188,157 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     }
   };
 
+  const copyShareLink = async () => {
+    const token = session?.user?.shareToken;
+
+    if (!token || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/share/${token}`);
+      setToast("공유 링크가 복사되었어요.");
+      setTimeout(() => {
+        setToast("");
+      }, 1800);
+    } catch {
+      setToast("복사를 실패했어요. 주소창에서 직접 복사해 주세요.");
+      setTimeout(() => {
+        setToast("");
+      }, 1800);
+    }
+  };
+
   const inputClass =
-    "w-full rounded-lg border border-slate-200 px-3 py-2 outline-none ring-0 focus:border-emerald-300";
+    "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100";
 
   const shareToken = session?.user?.shareToken;
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6 text-slate-900 sm:p-10">
-      <div className="mx-auto w-full max-w-5xl space-y-8">
-        <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100 sm:p-8">
-          <h1 className="text-3xl font-bold text-slate-900">여기여기 붙어라(paste-thumbs)</h1>
-          <p className="mt-2 text-sm text-slate-500">모임 체크인 MVP · 빠르게 참석 여부를 수집하고 정리해줘요.</p>
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
+        <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-emerald-50 via-white to-indigo-50 p-6 shadow-sm sm:p-8">
+          <div className="absolute right-[-2rem] top-[-2rem] h-40 w-40 rounded-full bg-indigo-300/30 blur-2xl" />
+          <div className="absolute bottom-[-2rem] left-[-1rem] h-48 w-48 rounded-full bg-emerald-300/25 blur-2xl" />
 
-          {isPersonalMode ? (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
-              {sessionStatus === "loading" ? (
-                <span className="rounded-full bg-slate-100 px-2 py-1">로그인 상태 확인중...</span>
-              ) : sessionStatus === "authenticated" ? (
-                <>
-                  <span className="rounded-full bg-slate-100 px-2 py-1">{session?.user?.email || "로그인됨"}</span>
-                  {shareToken ? (
-                    <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">내 링크: /share/{shareToken}</span>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => signOut({ callbackUrl: "/" })}
-                    className="rounded-full border border-slate-300 px-3 py-1 text-sm"
-                  >
-                    로그아웃
-                  </button>
-                </>
-              ) : (
-                <>
-                  <span className="rounded-full bg-rose-100 px-2 py-1 text-rose-700">로그인 필요</span>
-                  {hasGoogleProvider ? (
+          <div className="relative flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="inline-flex rounded-full bg-white px-3 py-1 text-xs font-semibold text-emerald-700">paste-thumbs</p>
+              <h1 className="mt-3 text-3xl font-black text-slate-900">모임 체크인</h1>
+              <p className="mt-2 text-sm text-slate-600">공유 링크로도 빠르게 참석 상태를 모을 수 있는 체크인 보드입니다.</p>
+            </div>
+
+            {isPersonalMode ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {sessionStatus === "loading" ? (
+                  <span className="rounded-full bg-white px-3 py-1 text-sm text-slate-500">로그인 상태 확인중...</span>
+                ) : sessionStatus === "authenticated" ? (
+                  <>
+                    <div className="rounded-full bg-white px-3 py-1 text-sm text-slate-700">{session.user?.email || "로그인됨"}</div>
                     <button
                       type="button"
-                      onClick={() => signIn("google")}
-                      className="rounded-full bg-slate-900 px-3 py-1 text-sm font-semibold text-white"
+                      onClick={() => signOut({ callbackUrl: "/" })}
+                      className="rounded-full border border-slate-300 bg-white px-3 py-1 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                     >
-                      Google 로그인
+                      로그아웃
                     </button>
-                  ) : (
-                    <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-700">OAuth 설정 미완료</span>
-                  )}
-                </>
-              )}
-            </div>
-          ) : (
-            <p className="mt-4 rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">공유 링크로 접근한 페이지입니다.</p>
-          )}
-
-          {isPersonalMode ? (
-            <>
-              <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                <input
-                  value={title}
-                  onChange={(event) => setTitle(event.currentTarget.value)}
-                  placeholder="모임 제목"
-                  className={inputClass}
-                />
-                <input
-                  value={date}
-                  onChange={(event) => setDate(event.currentTarget.value)}
-                  placeholder="일시 (예: 2월 20일 오후 7시)"
-                  className={inputClass}
-                />
+                    {shareToken ? (
+                      <button
+                        type="button"
+                        onClick={copyShareLink}
+                        className="rounded-full bg-slate-900 px-3 py-1 text-sm font-semibold text-white transition hover:bg-slate-700"
+                      >
+                        공유 링크 복사
+                      </button>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="rounded-full bg-white px-3 py-2 text-xs text-slate-700">
+                    {hasGoogleProvider ? (
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href="/auth/login"
+                          className="rounded-full bg-slate-900 px-3 py-1 text-sm font-semibold text-white"
+                        >
+                          로그인
+                        </Link>
+                        <Link
+                          href="/auth/signup"
+                          className="rounded-full border border-slate-300 bg-white px-3 py-1 text-sm font-semibold"
+                        >
+                          회원가입(구글)
+                        </Link>
+                      </div>
+                    ) : (
+                      <span className="text-amber-700">OAuth 미설정: /api/auth/providers 확인 필요</span>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="mt-3">
-                <input
-                  value={place}
-                  onChange={(event) => setPlace(event.currentTarget.value)}
-                  placeholder="장소 (선택)"
-                  className={inputClass}
-                />
-              </div>
-              <div className="mt-3">
-                <textarea
-                  value={memberInput}
-                  onChange={(event) => setMemberInput(event.currentTarget.value)}
-                  placeholder="참석자 이름을 줄바꿈으로 입력하세요\n예:\n홍길동\n김영희"
-                  rows={4}
-                  className={`${inputClass} resize-none`}
-                />
-              </div>
+            ) : (
+              <p className="rounded-full bg-white px-3 py-2 text-sm text-slate-700">공유 링크 전용 보기</p>
+            )}
+          </div>
 
-              <button
-                type="button"
-                onClick={submitMeeting}
-                disabled={sessionStatus !== "authenticated" || !title.trim() || !date.trim() || !memberInput.trim() || isBusy}
-                className="mt-4 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                {isBusy ? "저장 중..." : "체크인 만들기"}
-              </button>
-            </>
-          ) : null}
-
-          {error ? <p className="mt-3 rounded-md bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
+          {toast ? <p className="relative mt-4 rounded-md bg-emerald-100 px-3 py-2 text-sm text-emerald-800">{toast}</p> : null}
         </section>
+
+        {isPersonalMode && sessionStatus === "authenticated" ? (
+          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">새 체크인 만들기</h2>
+            <p className="mt-1 text-sm text-slate-500">제목, 일시, 참석자만 입력하면 즉시 공유 링크가 생성됩니다.</p>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <input
+                value={title}
+                onChange={(event) => setTitle(event.currentTarget.value)}
+                placeholder="모임 제목"
+                className={inputClass}
+              />
+              <input
+                value={date}
+                onChange={(event) => setDate(event.currentTarget.value)}
+                placeholder="일시 (예: 2월 20일 오후 7시)"
+                className={inputClass}
+              />
+            </div>
+            <div className="mt-3">
+              <input
+                value={place}
+                onChange={(event) => setPlace(event.currentTarget.value)}
+                placeholder="장소 (선택)"
+                className={inputClass}
+              />
+            </div>
+            <div className="mt-3">
+              <textarea
+                value={memberInput}
+                onChange={(event) => setMemberInput(event.currentTarget.value)}
+                placeholder="참석자 이름을 줄바꿈으로 입력하세요\n예:\n홍길동\n김영희"
+                rows={4}
+                className={`${inputClass} resize-none`}
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={submitMeeting}
+              disabled={sessionStatus !== "authenticated" || !title.trim() || !date.trim() || !memberInput.trim() || isBusy}
+              className="mt-4 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50"
+            >
+              {isBusy ? "저장 중..." : "체크인 만들기"}
+            </button>
+          </section>
+        ) : null}
+
+        {error ? <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
 
         <section className="grid gap-4">
           {meetings.length === 0 ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
               <p className="text-sm text-slate-500">
                 {isPersonalMode
-                  ? "아직 만든 체크인이 없어요. 위 폼에서 모임을 등록해보세요."
+                  ? "아직 만든 체크인이 없어요. 위 영역에서 모임을 등록해보세요."
                   : "해당 공유 링크에 모임이 없습니다."}
               </p>
             </div>
@@ -303,18 +351,18 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                   <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-slate-600">
                     <span className="rounded-full bg-slate-100 px-2 py-1">{meeting.date}</span>
                     {meeting.place ? <span className="rounded-full bg-slate-100 px-2 py-1">{meeting.place}</span> : null}
-                    <span className="rounded-full bg-slate-100 px-2 py-1">참석률 확인</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-1">총 {meeting.members.length}명</span>
                   </div>
 
-                  <h2 className="mb-2 text-lg font-semibold text-slate-900">{meeting.title}</h2>
+                  <h3 className="mb-2 text-lg font-semibold text-slate-900">{meeting.title}</h3>
 
                   <div className="mb-3 flex flex-wrap gap-2 text-xs">
-                    <span className="rounded-full border px-2 py-1 font-medium text-emerald-700">참석 {stats.참석}명</span>
-                    <span className="rounded-full border px-2 py-1 font-medium text-rose-700">불참 {stats.불참}명</span>
-                    <span className="rounded-full border px-2 py-1 font-medium text-amber-700">보류 {stats.보류}명</span>
+                    <span className="rounded-full border border-emerald-300 px-2 py-1 font-medium text-emerald-700">참석 {stats.참석}명</span>
+                    <span className="rounded-full border border-rose-300 px-2 py-1 font-medium text-rose-700">불참 {stats.불참}명</span>
+                    <span className="rounded-full border border-amber-300 px-2 py-1 font-medium text-amber-700">보류 {stats.보류}명</span>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     {meeting.members.map((member) => (
                       <div
                         key={member.id}
@@ -327,19 +375,17 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                               key={status}
                               type="button"
                               onClick={() => updateStatus(meeting.id, member.id, status)}
-                              className={`rounded-full border px-3 py-1 text-sm ${
+                              className={`rounded-full border px-3 py-1 text-sm transition ${
                                 member.status === status
                                   ? "bg-slate-900 text-white border-slate-900"
-                                  : "text-slate-600 border-slate-300"
+                                  : "text-slate-600 border-slate-300 hover:bg-slate-100"
                               }`}
                             >
                               {status}
                             </button>
                           ))}
                         </div>
-                        <span
-                          className={`ml-auto rounded-full border px-2 py-1 text-xs font-semibold ${STATUS_CHIP[member.status]}`}
-                        >
+                        <span className={`ml-auto rounded-full border px-2 py-1 text-xs font-semibold ${STATUS_CHIP[member.status]}`}>
                           현재: {member.status}
                         </span>
                       </div>
@@ -351,11 +397,14 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
           )}
         </section>
 
-        <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+        <section className="rounded-3xl bg-white p-5 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">한눈에 보는 상태</h2>
           <p className="mt-2 text-sm text-slate-500">
-            전체 {meetings.length}개 체크인 중 <strong>{allAttending.length}</strong>개가 모두 확정 참석입니다.
+            전체 {meetings.length}개 체크인 중 <strong>{allAttending.length}</strong>개가 모두 참석으로 확정됐습니다.
           </p>
+          {shareToken ? (
+            <div className="mt-2 text-xs text-slate-500">개인 공유 링크: <span className="font-mono">/share/{shareToken}</span></div>
+          ) : null}
         </section>
       </div>
     </main>
