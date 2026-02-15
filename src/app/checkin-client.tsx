@@ -1,13 +1,6 @@
 "use client";
 
-import { BaseProvider, LightTheme } from "baseui";
-import { Client as Styletron } from "styletron-engine-atomic";
-import { Provider as StyletronProvider } from "styletron-react";
 import { useEffect, useMemo, useState } from "react";
-import { Button } from "baseui/button";
-import { Input } from "baseui/input";
-import { Textarea } from "baseui/textarea";
-import { Card } from "baseui/card";
 import { Attendance, Meeting } from "@/lib/checkin-types";
 
 const statusList: Attendance[] = ["참석", "불참", "보류"];
@@ -17,8 +10,6 @@ const STATUS_CHIP: Record<Attendance, string> = {
   불참: "bg-rose-100 text-rose-700 border-rose-200",
   보류: "bg-amber-100 text-amber-700 border-amber-200",
 };
-
-const engine = new Styletron();
 
 function attendanceStats(members: Meeting["members"]) {
   return members.reduce<Record<Attendance, number>>(
@@ -91,13 +82,13 @@ export default function CheckinClient() {
         }),
       });
 
-      const payload = await response.json();
+      const payload = (await response.json()) as Meeting;
 
       if (!response.ok) {
-        throw new Error(payload?.message ?? "모임 생성에 실패했습니다.");
+        throw new Error((payload as { message?: string })?.message ?? "모임 생성에 실패했습니다.");
       }
 
-      setMeetings((prev) => [payload as Meeting, ...prev]);
+      setMeetings((prev) => [payload, ...prev]);
       setTitle("");
       setDate("");
       setPlace("");
@@ -125,10 +116,10 @@ export default function CheckinClient() {
         body: JSON.stringify({ memberId, status }),
       });
 
-      const payload = await response.json();
+      const payload = (await response.json()) as Meeting;
 
       if (!response.ok) {
-        throw new Error(payload?.message ?? "상태 변경 실패");
+        throw new Error((payload as { message?: string })?.message ?? "상태 변경 실패");
       }
 
       setMeetings((prev) =>
@@ -152,130 +143,129 @@ export default function CheckinClient() {
     }
   };
 
+  const inputClass =
+    "w-full rounded-lg border border-slate-200 px-3 py-2 outline-none ring-0 focus:border-emerald-300";
+
   return (
-    <StyletronProvider value={engine}>
-      <BaseProvider theme={LightTheme}>
-        <main className="min-h-screen bg-slate-50 p-6 text-slate-900 sm:p-10">
-          <div className="mx-auto w-full max-w-5xl space-y-8">
-            <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100 sm:p-8">
-              <h1 className="text-3xl font-bold text-slate-900">여기여기 붙어라(paste-thumbs)</h1>
-              <p className="mt-2 text-sm text-slate-500">모임 체크인 MVP · 빠르게 참석 여부를 수집하고 정리해줘요.</p>
+    <main className="min-h-screen bg-slate-50 p-6 text-slate-900 sm:p-10">
+      <div className="mx-auto w-full max-w-5xl space-y-8">
+        <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100 sm:p-8">
+          <h1 className="text-3xl font-bold text-slate-900">여기여기 붙어라(paste-thumbs)</h1>
+          <p className="mt-2 text-sm text-slate-500">모임 체크인 MVP · 빠르게 참석 여부를 수집하고 정리해줘요.</p>
 
-              <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                <Input
-                  value={title}
-                  onChange={(event) => setTitle(event.currentTarget.value)}
-                  placeholder="모임 제목"
-                  overrides={{}}
-                />
-                <Input
-                  value={date}
-                  onChange={(event) => setDate(event.currentTarget.value)}
-                  placeholder="일시 (예: 2월 20일 오후 7시)"
-                  overrides={{}}
-                />
-              </div>
-              <div className="mt-3">
-                <Input
-                  value={place}
-                  onChange={(event) => setPlace(event.currentTarget.value)}
-                  placeholder="장소 (선택)"
-                  overrides={{}}
-                />
-              </div>
-              <div className="mt-3">
-                <Textarea
-                  value={memberInput}
-                  onChange={(event) => setMemberInput(event.currentTarget.value)}
-                  placeholder="참석자 이름을 줄바꿈으로 입력하세요\n예:\n홍길동\n김영희"
-                  rows={4}
-                  overrides={{}}
-                />
-              </div>
-
-              <Button
-                onClick={submitMeeting}
-                disabled={!title.trim() || !date.trim() || !memberInput.trim() || isBusy}
-                className="mt-4"
-                overrides={{}}
-              >
-                {isBusy ? "저장 중..." : "체크인 만들기"}
-              </Button>
-
-              {error ? <p className="mt-3 rounded-md bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
-            </section>
-
-            <section className="grid gap-4">
-              {meetings.length === 0 ? (
-                <Card overrides={{}}>
-                  <p className="text-sm text-slate-500">아직 만든 체크인이 없어요. 위 폼에서 모임을 등록해보세요.</p>
-                </Card>
-              ) : (
-                meetings.map((meeting) => {
-                  const stats = attendanceStats(meeting.members);
-
-                  return (
-                    <Card key={meeting.id} title={meeting.title} overrides={{}}>
-                      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                        <span className="rounded-full bg-slate-100 px-2 py-1">{meeting.date}</span>
-                        {meeting.place ? <span className="rounded-full bg-slate-100 px-2 py-1">{meeting.place}</span> : null}
-                        <span className="rounded-full bg-slate-100 px-2 py-1">참석률 확인</span>
-                      </div>
-
-                      <div className="mb-3 flex flex-wrap gap-2 text-xs">
-                        <span className="rounded-full border px-2 py-1 font-medium text-emerald-700">참석 {stats.참석}명</span>
-                        <span className="rounded-full border px-2 py-1 font-medium text-rose-700">불참 {stats.불참}명</span>
-                        <span className="rounded-full border px-2 py-1 font-medium text-amber-700">보류 {stats.보류}명</span>
-                      </div>
-
-                      <div className="space-y-3">
-                        {meeting.members.map((member) => (
-                          <div
-                            key={member.id}
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3"
-                          >
-                            <p className="font-medium text-slate-800">{member.name}</p>
-                            <div className="flex flex-wrap gap-2">
-                              {statusList.map((status) => (
-                                <Button
-                                  key={status}
-                                  kind={member.status === status ? "primary" : "secondary"}
-                                  onClick={() => updateStatus(meeting.id, member.id, status)}
-                                  overrides={{
-                                    Root: {
-                                      style: {
-                                        borderRadius: "9999px",
-                                      },
-                                    },
-                                  }}
-                                >
-                                  {status}
-                                </Button>
-                              ))}
-                            </div>
-                            <span
-                              className={`ml-auto rounded-full border px-2 py-1 text-xs font-semibold ${STATUS_CHIP[member.status]}`}
-                            >
-                              현재: {member.status}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </Card>
-                  );
-                })
-              )}
-            </section>
-
-            <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-              <h2 className="text-xl font-semibold text-slate-900">한눈에 보는 상태</h2>
-              <p className="mt-2 text-sm text-slate-500">
-                전체 {meetings.length}개 체크인 중 <strong>{allAttending.length}</strong>개가 모두 확정 참석입니다.
-              </p>
-            </section>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.currentTarget.value)}
+              placeholder="모임 제목"
+              className={inputClass}
+            />
+            <input
+              value={date}
+              onChange={(event) => setDate(event.currentTarget.value)}
+              placeholder="일시 (예: 2월 20일 오후 7시)"
+              className={inputClass}
+            />
           </div>
-        </main>
-      </BaseProvider>
-    </StyletronProvider>
+          <div className="mt-3">
+            <input
+              value={place}
+              onChange={(event) => setPlace(event.currentTarget.value)}
+              placeholder="장소 (선택)"
+              className={inputClass}
+            />
+          </div>
+          <div className="mt-3">
+            <textarea
+              value={memberInput}
+              onChange={(event) => setMemberInput(event.currentTarget.value)}
+              placeholder="참석자 이름을 줄바꿈으로 입력하세요\n예:\n홍길동\n김영희"
+              rows={4}
+              className={`${inputClass} resize-none`}
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={submitMeeting}
+            disabled={!title.trim() || !date.trim() || !memberInput.trim() || isBusy}
+            className="mt-4 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {isBusy ? "저장 중..." : "체크인 만들기"}
+          </button>
+
+          {error ? <p className="mt-3 rounded-md bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
+        </section>
+
+        <section className="grid gap-4">
+          {meetings.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <p className="text-sm text-slate-500">아직 만든 체크인이 없어요. 위 폼에서 모임을 등록해보세요.</p>
+            </div>
+          ) : (
+            meetings.map((meeting) => {
+              const stats = attendanceStats(meeting.members);
+
+              return (
+                <div key={meeting.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                    <span className="rounded-full bg-slate-100 px-2 py-1">{meeting.date}</span>
+                    {meeting.place ? <span className="rounded-full bg-slate-100 px-2 py-1">{meeting.place}</span> : null}
+                    <span className="rounded-full bg-slate-100 px-2 py-1">참석률 확인</span>
+                  </div>
+
+                  <h2 className="mb-2 text-lg font-semibold text-slate-900">{meeting.title}</h2>
+
+                  <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-full border px-2 py-1 font-medium text-emerald-700">참석 {stats.참석}명</span>
+                    <span className="rounded-full border px-2 py-1 font-medium text-rose-700">불참 {stats.불참}명</span>
+                    <span className="rounded-full border px-2 py-1 font-medium text-amber-700">보류 {stats.보류}명</span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {meeting.members.map((member) => (
+                      <div
+                        key={member.id}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3"
+                      >
+                        <p className="font-medium text-slate-800">{member.name}</p>
+                        <div className="flex flex-wrap gap-2">
+                          {statusList.map((status) => (
+                            <button
+                              key={status}
+                              type="button"
+                              onClick={() => updateStatus(meeting.id, member.id, status)}
+                              className={`rounded-full border px-3 py-1 text-sm ${
+                                member.status === status
+                                  ? "bg-slate-900 text-white border-slate-900"
+                                  : "text-slate-600 border-slate-300"
+                              }`}
+                            >
+                              {status}
+                            </button>
+                          ))}
+                        </div>
+                        <span
+                          className={`ml-auto rounded-full border px-2 py-1 text-xs font-semibold ${STATUS_CHIP[member.status]}`}
+                        >
+                          현재: {member.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </section>
+
+        <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+          <h2 className="text-xl font-semibold text-slate-900">한눈에 보는 상태</h2>
+          <p className="mt-2 text-sm text-slate-500">
+            전체 {meetings.length}개 체크인 중 <strong>{allAttending.length}</strong>개가 모두 확정 참석입니다.
+          </p>
+        </section>
+      </div>
+    </main>
   );
 }
