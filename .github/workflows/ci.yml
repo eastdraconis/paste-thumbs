@@ -28,20 +28,3 @@ jobs:
 
       - name: Build
         run: npm run build
-
-      - name: Notify Telegram on completion
-        if: always()
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          STATUS: ${{ job.status }}
-        run: |
-          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
-            MESSAGE="paste-thumbs CI (${GITHUB_REPOSITORY}@${GITHUB_SHA:0:7}) - status: $STATUS"
-            curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-              --form chat_id="$TELEGRAM_CHAT_ID" \
-              --form text="$MESSAGE" \
-              > /dev/null
-          else
-            echo "Telegram secrets not set. Skip notification."
-          fi
