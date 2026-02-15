@@ -38,7 +38,12 @@ export async function GET(request: NextRequest) {
 
     if (meetingToken) {
       const meeting = await getMeetingByShareToken(meetingToken);
-      return NextResponse.json(meeting ? [meeting] : []);
+      if (meeting) {
+        return NextResponse.json([meeting]);
+      }
+
+      const legacyMeetings = await getMeetingsByOwnerToken(meetingToken);
+      return NextResponse.json(legacyMeetings);
     }
 
     if (ownerToken) {
