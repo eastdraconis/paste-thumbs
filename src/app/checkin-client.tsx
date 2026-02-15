@@ -36,6 +36,10 @@ const STATUS_CHIP: Record<Attendance, string> = {
   보류: "bg-amber-100 text-amber-700 border-amber-200",
 };
 
+
+const MAX_ATTENDEES = 50;
+
+
 const checkinSchema = z.object({
   title: z.string().trim().min(1, "모임 제목을 입력해 주세요."),
   date: z.string().trim().min(1, "일시를 입력해 주세요."),
@@ -70,6 +74,22 @@ function buildApiUrl(path: string, token?: string, isSharedMode = false) {
 
 function formatShareUrl(shareToken: string, origin: string) {
   return `${origin}/share/${shareToken}`;
+}
+
+function formatMeetingDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function parseMemberInput(value: string): ParsedMembers {
@@ -190,15 +210,31 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       return;
     }
 
-    const filteredNew = parsed.names.filter((name) => !currentNames.has(name));
-    const duplicateWithCurrent = parsed.names.length - filteredNew.length;
+    const remainingSlots = MAX_ATTENDEES - fields.length;
+
+    if (remainingSlots <= 0) {
+      setMemberInputMessage(`참석자 수는 최대 ${MAX_ATTENDEES}명까지 추가할 수 있어요.`);
+      setMemberInput("");
+      return;
+    }
+
+    const deduped = parsed.names.filter((name) => !currentNames.has(name));
+    const duplicateWithCurrent = parsed.names.length - deduped.length;
+    const filteredNew = deduped.slice(0, Math.max(0, remainingSlots));
 
     if (filteredNew.length > 0) {
       append(filteredNew.map((name) => ({ name })));
     }
 
+    const droppedCount = deduped.length - filteredNew.length;
+
     if (duplicateWithCurrent > 0) {
       setMemberInputMessage(`${duplicateWithCurrent}명은 이미 목록에 있어 제외했어요.`);
+      if (droppedCount > 0) {
+        setMemberInputMessage(`새로운 입력 중 ${droppedCount}명은 최대 ${MAX_ATTENDEES}명 제한으로 제외했어요.`);
+      }
+    } else if (droppedCount > 0) {
+      setMemberInputMessage(`남은 ${remainingSlots}명까지만 추가돼요.`);
     } else {
       setMemberInputMessage(`"${filteredNew.length}명"이(가) 추가됐어요.`);
     }
@@ -206,12 +242,16 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     setMemberInput("");
     window.setTimeout(() => {
       setMemberInputMessage("");
-    }, 1200);
+    }, 1500);
   };
 
   const getMemberInputMessage = () => {
     if (submitError || errors.attendees?.message) {
       return errors.attendees?.message ?? "";
+    }
+
+    if (memberCount >= MAX_ATTENDEES) {
+      return `최대 ${MAX_ATTENDEES}명 참여 가능`;
     }
 
     return memberInputMessage || `${memberCount}명 입력됨`;
@@ -538,7 +578,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
               return (
                 <div key={meeting.id} className="rounded-2xl border border-slate-200 bg-white p-4">
                   <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                    <span className="rounded-full bg-slate-100 px-2 py-1">{meeting.date}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-1">{formatMeetingDate(meeting.date)}</span>
                     {meeting.place ? <span className="rounded-full bg-slate-100 px-2 py-1">{meeting.place}</span> : null}
                     <span className="rounded-full bg-slate-100 px-2 py-1">총 {meeting.members.length}명</span>
                   </div>
