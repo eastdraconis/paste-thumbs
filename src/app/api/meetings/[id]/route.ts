@@ -1,15 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { getMeetingOwner, updateMemberStatus } from "@/lib/checkin-store";
+import { authOptions } from "@/lib/auth";
 
 function isInvalidApiKeyError(error: Error): boolean {
   return error.message.includes("Invalid API key") || error.message.includes("DOUBLE_CHECK") || error.message.includes("Invalid JWT");
 }
-import { updateMemberStatus } from "@/lib/checkin-store";
+
+function isOwnerColumnMissing(errorMessage: string): boolean {
+  return errorMessage.includes("owner_email") || errorMessage.includes("owner_share_token") || errorMessage.includes("column");
+}
 
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
+    const url = new URL(request.url);
+    const ownerToken = url.searchParams.get("ownerToken") || "";
+
     const body = await request.json();
     const params = await context.params;
     const meetingId = params.id;
@@ -24,6 +33,35 @@ export async function PATCH(
       );
     }
 
+    const meetingOwner = await getMeetingOwner(meetingId);
+    if (!meetingOwner) {
+      return NextResponse.json(
+        { message: "해당 모임을 찾을 수 없습니다." },
+        { status: 404 },
+      );
+    }
+
+    if (!ownerToken) {
+      const session = await getServerSession(authOptions);
+      const email = session?.user?.email;
+
+      if (!email || email !== meetingOwner.owner_email) {
+        return NextResponse.json(
+          {
+            message: "해당 모임을 수정할 권한이 없습니다.",
+          },
+          { status: 403 },
+        );
+      }
+    } else if (!meetingOwner.owner_share_token || ownerToken !== meetingOwner.owner_share_token) {
+      return NextResponse.json(
+        {
+          message: "공유 링크가 유효하지 않습니다.",
+        },
+        { status: 403 },
+      );
+    }
+
     const updated = await updateMemberStatus(meetingId, {
       memberId,
       status,
@@ -31,6 +69,16 @@ export async function PATCH(
 
     return NextResponse.json(updated);
   } catch (error: unknown) {
+    if (error instanceof Error && isOwnerColumnMissing(error.message)) {
+      return NextResponse.json(
+        {
+          message:
+            "DB 스키마 업데이트가 필요합니다. meetings 테이블에 owner_email / owner_share_token 컬럼을 추가해 주세요.",
+        },
+        { status: 500 },
+      );
+    }
+
     if (error instanceof Error && error.message === "SUPABASE_MISCONFIGURED") {
       return NextResponse.json(
         {

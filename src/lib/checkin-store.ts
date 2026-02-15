@@ -8,11 +8,19 @@ type MeetingRow = {
   date: string;
   place: string | null;
   created_at: string;
+  owner_email: string | null;
+  owner_share_token: string | null;
   meeting_members: {
     id: string;
     name: string;
     status: Attendance;
   }[];
+};
+
+type MeetingOwner = {
+  id: string;
+  owner_email: string | null;
+  owner_share_token: string | null;
 };
 
 function toAttendance(value: string): Attendance | undefined {
@@ -52,21 +60,71 @@ function mapToMeeting(row: MeetingRow): Meeting {
   };
 }
 
-export async function getMeetings(): Promise<Meeting[]> {
-  const supabase = getSupabaseServerClient() as any;
-
-  const { data, error } = await supabase
-    .from("meetings")
-    .select(
-      `
+function meetingSelectClause(): string {
+  return `
       id,
       title,
       date,
       place,
       created_at,
+      owner_email,
+      owner_share_token,
       meeting_members ( id, name, status )
-    `,
-    )
+    `;
+}
+
+export async function getMeetingOwner(meetingId: string): Promise<MeetingOwner | null> {
+  const supabase = getSupabaseServerClient() as any;
+
+  const { data, error } = await supabase
+    .from("meetings")
+    .select("id, owner_email, owner_share_token")
+    .eq("id", meetingId)
+    .single();
+
+  if (error) {
+    return null;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    id: data.id as string,
+    owner_email: data.owner_email as string | null,
+    owner_share_token: data.owner_share_token as string | null,
+  };
+}
+
+export async function getMeetings(ownerEmail?: string): Promise<Meeting[]> {
+  const supabase = getSupabaseServerClient() as any;
+
+  let query = supabase
+    .from("meetings")
+    .select(meetingSelectClause())
+    .order("created_at", { ascending: false });
+
+  if (ownerEmail) {
+    query = query.eq("owner_email", ownerEmail);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(`DB_ERROR: ${formatDbError(error)}`);
+  }
+
+  return (data as MeetingRow[] | undefined ?? []).map((row) => mapToMeeting(row));
+}
+
+export async function getMeetingsByOwnerToken(ownerToken: string): Promise<Meeting[]> {
+  const supabase = getSupabaseServerClient() as any;
+
+  const { data, error } = await supabase
+    .from("meetings")
+    .select(meetingSelectClause())
+    .eq("owner_share_token", ownerToken)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -76,7 +134,7 @@ export async function getMeetings(): Promise<Meeting[]> {
   return (data as MeetingRow[] | undefined ?? []).map((row) => mapToMeeting(row));
 }
 
-export async function createMeeting(payload: NewMeetingPayload): Promise<Meeting> {
+export async function createMeeting(payload: NewMeetingPayload, ownerEmail: string, ownerShareToken: string): Promise<Meeting> {
   const supabase = getSupabaseServerClient() as any;
   const members = payload.members
     .map((name) => name.trim())
@@ -96,6 +154,8 @@ export async function createMeeting(payload: NewMeetingPayload): Promise<Meeting
       title: payload.title,
       date: payload.date,
       place: payload.place?.trim() || null,
+      owner_email: ownerEmail,
+      owner_share_token: ownerShareToken,
     })
     .select("id")
     .single();
@@ -118,16 +178,7 @@ export async function createMeeting(payload: NewMeetingPayload): Promise<Meeting
 
   const { data: finalData, error: selectError } = await supabase
     .from("meetings")
-    .select(
-      `
-      id,
-      title,
-      date,
-      place,
-      created_at,
-      meeting_members ( id, name, status )
-    `,
-    )
+    .select(meetingSelectClause())
     .eq("id", meetingData.id)
     .single();
 
@@ -167,16 +218,7 @@ export async function updateMemberStatus(
 
   const { data: meetingData, error: selectError } = await supabase
     .from("meetings")
-    .select(
-      `
-      id,
-      title,
-      date,
-      place,
-      created_at,
-      meeting_members ( id, name, status )
-    `,
-    )
+    .select(meetingSelectClause())
     .eq("id", meetingId)
     .single();
 

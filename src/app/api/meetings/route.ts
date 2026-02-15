@@ -1,17 +1,62 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createMeeting, getMeetings } from "@/lib/checkin-store";
+import { getServerSession } from "next-auth";
+import { getMeetings, getMeetingsByOwnerToken, createMeeting } from "@/lib/checkin-store";
+import { ownerShareToken } from "@/lib/auth";
+import { authOptions } from "@/lib/auth";
 import { NewMeetingPayload } from "@/lib/checkin-types";
 
 function isInvalidApiKeyError(error: Error): boolean {
   return error.message.includes("Invalid API key") || error.message.includes("DOUBLE_CHECK") || error.message.includes("Invalid JWT");
 }
 
-export async function GET() {
+function isOwnerColumnMissing(errorMessage: string): boolean {
+  return errorMessage.includes("owner_email") || errorMessage.includes("owner_share_token") || errorMessage.includes("column");
+}
+
+function resolveOwnerToken(email?: string): string {
+  if (!email) {
+    return "";
+  }
+
+  return ownerShareToken(email);
+}
+
+export async function GET(request: NextRequest) {
   try {
-    const meetings = await getMeetings();
+    const url = new URL(request.url);
+    const ownerToken = url.searchParams.get("ownerToken") || "";
+
+    if (ownerToken) {
+      const meetings = await getMeetingsByOwnerToken(ownerToken);
+      return NextResponse.json(meetings);
+    }
+
+    const session = await getServerSession(authOptions);
+    const email = session?.user?.email;
+
+    if (!email) {
+      return NextResponse.json(
+        {
+          message: "로그인 후 이용 가능합니다.",
+        },
+        { status: 401 },
+      );
+    }
+
+    const meetings = await getMeetings(email);
 
     return NextResponse.json(meetings);
   } catch (error: unknown) {
+    if (error instanceof Error && isOwnerColumnMissing(error.message)) {
+      return NextResponse.json(
+        {
+          message:
+            "DB 스키마 업데이트가 필요합니다. meetings 테이블에 owner_email / owner_share_token 컬럼을 추가해 주세요.",
+        },
+        { status: 500 },
+      );
+    }
+
     if (error instanceof Error && error.message === "SUPABASE_MISCONFIGURED") {
       return NextResponse.json(
         {
@@ -41,6 +86,18 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await getServerSession(authOptions);
+    const email = session?.user?.email;
+
+    if (!email) {
+      return NextResponse.json(
+        {
+          message: "로그인 후 모임을 생성할 수 있습니다.",
+        },
+        { status: 401 },
+      );
+    }
+
     const body = (await req.json()) as Partial<NewMeetingPayload>;
 
     const title = typeof body.title === "string" ? body.title.trim() : "";
@@ -59,15 +116,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const meeting = await createMeeting({
-      title,
-      date,
-      place,
-      members,
-    });
+    const ownerToken = resolveOwnerToken(email);
+    const meeting = await createMeeting(
+      {
+        title,
+        date,
+        place,
+        members,
+      },
+      email,
+      ownerToken,
+    );
 
     return NextResponse.json(meeting, { status: 201 });
   } catch (error: unknown) {
+    if (error instanceof Error && isOwnerColumnMissing(error.message)) {
+      return NextResponse.json(
+        {
+          message:
+            "DB 스키마 업데이트가 필요합니다. meetings 테이블에 owner_email / owner_share_token 컬럼을 추가해 주세요.",
+        },
+        { status: 500 },
+      );
+    }
+
     if (error instanceof Error && error.message === "SUPABASE_MISCONFIGURED") {
       return NextResponse.json(
         {

@@ -17,6 +17,8 @@ export const metadata: Metadata = {
   description: "간단한 모임 참석 체크인 프로젝트",
 };
 
+import SessionProviderWrapper from "./session-provider";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -25,7 +27,7 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        {children}
+        <SessionProviderWrapper>{children}</SessionProviderWrapper>
       </body>
     </html>
   );
