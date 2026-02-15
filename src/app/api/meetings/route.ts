@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { createMeeting, getMeetings } from "@/lib/checkin-store";
 import { NewMeetingPayload } from "@/lib/checkin-types";
 
+function isInvalidApiKeyError(error: Error): boolean {
+  return error.message.includes("Invalid API key") || error.message.includes("DOUBLE_CHECK") || error.message.includes("Invalid JWT");
+}
+
 export async function GET() {
   try {
     const meetings = await getMeetings();
@@ -16,6 +20,17 @@ export async function GET() {
         { status: 500 },
       );
     }
+
+    if (error instanceof Error && isInvalidApiKeyError(error)) {
+      return NextResponse.json(
+        {
+          message: "Supabase API 키가 유효하지 않습니다. SUPABASE_SERVICE_ROLE_KEY를 다시 등록해 주세요.",
+        },
+        { status: 500 },
+      );
+    }
+
+    console.error("GET /api/meetings error", error);
 
     return NextResponse.json(
       { message: "모임 조회 중 오류가 발생했습니다." },
@@ -61,6 +76,17 @@ export async function POST(req: NextRequest) {
         { status: 500 },
       );
     }
+
+    if (error instanceof Error && isInvalidApiKeyError(error)) {
+      return NextResponse.json(
+        {
+          message: "Supabase API 키가 유효하지 않습니다. SUPABASE_SERVICE_ROLE_KEY를 다시 등록해 주세요.",
+        },
+        { status: 500 },
+      );
+    }
+
+    console.error("POST /api/meetings error", error);
 
     return NextResponse.json(
       { message: "모임 저장에 실패했습니다." },

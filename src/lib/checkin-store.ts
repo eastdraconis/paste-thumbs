@@ -23,6 +23,20 @@ function toAttendance(value: string): Attendance | undefined {
   return undefined;
 }
 
+function formatDbError(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const maybe = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+    const code = typeof maybe.code === "string" ? maybe.code : "UNKNOWN";
+    const message = typeof maybe.message === "string" ? maybe.message : "DB error";
+    const details = typeof maybe.details === "string" ? ` - ${maybe.details}` : "";
+    const hint = typeof maybe.hint === "string" ? ` (${maybe.hint})` : "";
+
+    return `${code}: ${message}${details}${hint}`;
+  }
+
+  return "DB_ERROR";
+}
+
 function mapToMeeting(row: MeetingRow): Meeting {
   return {
     id: row.id,
@@ -56,7 +70,7 @@ export async function getMeetings(): Promise<Meeting[]> {
     .order("created_at", { ascending: false });
 
   if (error) {
-    throw new Error("DB_ERROR");
+    throw new Error(`DB_ERROR: ${formatDbError(error)}`);
   }
 
   return (data as MeetingRow[] | undefined ?? []).map((row) => mapToMeeting(row));
@@ -87,7 +101,7 @@ export async function createMeeting(payload: NewMeetingPayload): Promise<Meeting
     .single();
 
   if (meetingError || !meetingData?.id) {
-    throw new Error("CREATE_MEETING_FAILED");
+    throw new Error(`CREATE_MEETING_FAILED: ${meetingError ? formatDbError(meetingError) : "missing_id"}`);
   }
 
   const { error: memberError } = await supabase.from("meeting_members").insert(
@@ -99,7 +113,7 @@ export async function createMeeting(payload: NewMeetingPayload): Promise<Meeting
   );
 
   if (memberError) {
-    throw new Error("CREATE_MEMBER_FAILED");
+    throw new Error(`CREATE_MEMBER_FAILED: ${formatDbError(memberError)}`);
   }
 
   const { data: finalData, error: selectError } = await supabase
@@ -118,7 +132,7 @@ export async function createMeeting(payload: NewMeetingPayload): Promise<Meeting
     .single();
 
   if (selectError || !finalData) {
-    throw new Error("MEETING_NOT_FOUND");
+    throw new Error(`MEETING_NOT_FOUND: ${selectError ? formatDbError(selectError) : "missing_data"}`);
   }
 
   return mapToMeeting(finalData as MeetingRow);
@@ -144,7 +158,7 @@ export async function updateMemberStatus(
     .maybeSingle();
 
   if (updateError) {
-    throw new Error("UPDATE_MEMBER_FAILED");
+    throw new Error(`UPDATE_MEMBER_FAILED: ${formatDbError(updateError)}`);
   }
 
   if (!updatedRows) {
@@ -167,7 +181,7 @@ export async function updateMemberStatus(
     .single();
 
   if (selectError || !meetingData) {
-    throw new Error("NOT_FOUND_MEETING");
+    throw new Error(`NOT_FOUND_MEETING: ${selectError ? formatDbError(selectError) : "missing_data"}`);
   }
 
   return mapToMeeting(meetingData as MeetingRow);

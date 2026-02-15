@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+
+function isInvalidApiKeyError(error: Error): boolean {
+  return error.message.includes("Invalid API key") || error.message.includes("DOUBLE_CHECK") || error.message.includes("Invalid JWT");
+}
 import { updateMemberStatus } from "@/lib/checkin-store";
 
 export async function PATCH(
@@ -36,14 +40,23 @@ export async function PATCH(
       );
     }
 
-    if (error instanceof Error && error.message === "NOT_FOUND_MEETING") {
+    if (error instanceof Error && isInvalidApiKeyError(error)) {
+      return NextResponse.json(
+        {
+          message: "Supabase API 키가 유효하지 않습니다. SUPABASE_SERVICE_ROLE_KEY를 다시 등록해 주세요.",
+        },
+        { status: 500 },
+      );
+    }
+
+    if (error instanceof Error && error.message.startsWith("NOT_FOUND_MEETING:")) {
       return NextResponse.json(
         { message: "해당 모임을 찾을 수 없습니다." },
         { status: 404 },
       );
     }
 
-    if (error instanceof Error && error.message === "NOT_FOUND_MEMBER") {
+    if (error instanceof Error && error.message.startsWith("NOT_FOUND_MEMBER:")) {
       return NextResponse.json(
         { message: "해당 참석자를 찾을 수 없습니다." },
         { status: 404 },
@@ -56,6 +69,8 @@ export async function PATCH(
         { status: 400 },
       );
     }
+
+    console.error("PATCH /api/meetings/[id] error", error);
 
     return NextResponse.json(
       { message: "상태 변경에 실패했습니다." },
