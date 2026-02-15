@@ -7,8 +7,20 @@ export async function GET() {
     const meetings = await getMeetings();
 
     return NextResponse.json(meetings);
-  } catch {
-    return NextResponse.json({ message: "모임 조회 중 오류가 발생했습니다." }, { status: 500 });
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === "SUPABASE_MISCONFIGURED") {
+      return NextResponse.json(
+        {
+          message: "Supabase 환경 변수가 설정되지 않았습니다. SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY를 확인하세요.",
+        },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json(
+      { message: "모임 조회 중 오류가 발생했습니다." },
+      { status: 500 },
+    );
   }
 }
 
@@ -26,13 +38,33 @@ export async function POST(req: NextRequest) {
       .filter(Boolean);
 
     if (!title || !date || members.length === 0) {
-      return NextResponse.json({ message: "필수 항목(제목/일시/참석자)이 부족합니다." }, { status: 400 });
+      return NextResponse.json(
+        { message: "필수 항목(제목/일시/참석자)이 부족합니다." },
+        { status: 400 },
+      );
     }
 
-    const meeting = await createMeeting({ title, date, place, members });
+    const meeting = await createMeeting({
+      title,
+      date,
+      place,
+      members,
+    });
 
     return NextResponse.json(meeting, { status: 201 });
-  } catch {
-    return NextResponse.json({ message: "모임 저장에 실패했습니다." }, { status: 500 });
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === "SUPABASE_MISCONFIGURED") {
+      return NextResponse.json(
+        {
+          message: "Supabase 환경 변수가 설정되지 않았습니다. SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY를 확인하세요.",
+        },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json(
+      { message: "모임 저장에 실패했습니다." },
+      { status: 500 },
+    );
   }
 }

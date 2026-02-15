@@ -2,13 +2,14 @@
 
 `paste-thumbs` (여기여기 붙어라) 모임 체크인 MVP.
 
-- 스택: **Next.js + React + Tailwind CSS + Base UI**
+- 스택: **Next.js + React + Tailwind CSS + Base UI + Supabase(PostgreSQL)**
 - 목표: 모임 링크 기반으로 참석/불참을 빠르게 모아보기
 
 ## 시작하기
 
 ```bash
 npm install
+cp .env.example .env.local  # Supabase 값 입력
 npm run dev
 ```
 
@@ -23,22 +24,22 @@ npm run dev
 
 ## 서버 저장소(백엔드) 동작
 
-이 프로젝트는 클라이언트 상태만 쓰지 않고, 서버 API를 통해 데이터를 저장합니다.
+이 프로젝트는 서버 API를 통해 Supabase(PostgreSQL)에 저장합니다.
 
 - `GET /api/meetings` : 모임 목록 조회
 - `POST /api/meetings` : 새 모임 생성
 - `PATCH /api/meetings/:meetingId` : 특정 참석자의 상태 변경
 
-### 데이터 저장 위치
+## DB 스키마
 
-`data/meetings.json` 파일에 모임 데이터를 저장합니다.
+`supabase/migrations/20260215000000_init.sql`에 포함되어 있습니다.
 
-운영 환경에 따라 파일 기반 저장은 성능/안정성 한계가 있을 수 있으니,
-실서비스는 PostgreSQL 같은 DB로 교체 권장합니다.
+## 환경 변수
 
-## 향후 확장
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY` (서버 라우트에서 사용)
 
-- 공유 링크/토큰 기반 초대 화면
-- 익명 참석자 체크인(로그인 없이)
-- 알림(텔레그램/이메일) 연동
-- 모임 일정 캘린더 연동
+## 운영 주의
+
+- 운영에서는 서비스 롤 키를 안전하게 보관하세요.
+- 향후 공개 초대 링크, 사용자 인증, 알림 연동을 위해 RLS 정책을 추가해 보안을 강화할 수 있습니다.

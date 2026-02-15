@@ -1,53 +1,19 @@
-import { randomUUID } from "node:crypto";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
-import { dirname, join } from "node:path";
-import {
-  Attendance,
-  Meeting,
-  Member,
-  NewMeetingPayload,
-  UpdateMemberStatusPayload,
-} from "./checkin-types";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { Attendance, Meeting, NewMeetingPayload, UpdateMemberStatusPayload } from "./checkin-types";
+import { getSupabaseServerClient } from "./supabase";
 
-const DATA_DIR = join(process.cwd(), "data");
-const DATA_FILE = join(DATA_DIR, "meetings.json");
-
-type Database = {
-  meetings: Meeting[];
+type MeetingRow = {
+  id: string;
+  title: string;
+  date: string;
+  place: string | null;
+  created_at: string;
+  meeting_members: {
+    id: string;
+    name: string;
+    status: Attendance;
+  }[];
 };
-
-const initialDb: Database = {
-  meetings: [],
-};
-
-async function ensureStorage(): Promise<void> {
-  await mkdir(DATA_DIR, { recursive: true });
-
-  try {
-    await access(DATA_FILE, constants.F_OK);
-  } catch {
-    await writeFile(DATA_FILE, JSON.stringify(initialDb, null, 2), "utf8");
-  }
-}
-
-async function loadDb(): Promise<Database> {
-  await ensureStorage();
-
-  const raw = await readFile(DATA_FILE, "utf8");
-  const parsed = JSON.parse(raw);
-
-  if (!parsed || !Array.isArray(parsed.meetings)) {
-    return initialDb;
-  }
-
-  return parsed;
-}
-
-async function saveDb(data: Database): Promise<void> {
-  await mkdir(dirname(DATA_FILE), { recursive: true });
-  await writeFile(DATA_FILE, JSON.stringify(data, null, 2), "utf8");
-}
 
 function toAttendance(value: string): Attendance | undefined {
   if (value === "참석" || value === "불참" || value === "보류") {
@@ -57,60 +23,152 @@ function toAttendance(value: string): Attendance | undefined {
   return undefined;
 }
 
+function mapToMeeting(row: MeetingRow): Meeting {
+  return {
+    id: row.id,
+    title: row.title,
+    date: row.date,
+    place: row.place ?? "",
+    createdAt: row.created_at,
+    members: (row.meeting_members ?? []).map((member) => ({
+      id: member.id,
+      name: member.name,
+      status: member.status,
+    })),
+  };
+}
+
 export async function getMeetings(): Promise<Meeting[]> {
-  const db = await loadDb();
-  return db.meetings;
+  const supabase = getSupabaseServerClient() as any;
+
+  const { data, error } = await supabase
+    .from("meetings")
+    .select(
+      `
+      id,
+      title,
+      date,
+      place,
+      created_at,
+      meeting_members ( id, name, status )
+    `,
+    )
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error("DB_ERROR");
+  }
+
+  return (data as MeetingRow[] | undefined ?? []).map((row) => mapToMeeting(row));
 }
 
 export async function createMeeting(payload: NewMeetingPayload): Promise<Meeting> {
-  const db = await loadDb();
-
-  const members: Member[] = payload.members
+  const supabase = getSupabaseServerClient() as any;
+  const members = payload.members
+    .map((name) => name.trim())
+    .filter(Boolean)
     .map((name) => ({
-      id: randomUUID(),
       name,
       status: "보류" as Attendance,
-    }))
-    .filter((member) => member.name.length > 0);
+    }));
 
-  const meeting: Meeting = {
-    id: randomUUID(),
-    title: payload.title,
-    date: payload.date,
-    place: payload.place ?? "",
-    members,
-    createdAt: new Date().toISOString(),
-  };
+  if (members.length === 0) {
+    throw new Error("MEMBER_REQUIRED");
+  }
 
-  db.meetings.unshift(meeting);
-  await saveDb(db);
-  return meeting;
+  const { data: meetingData, error: meetingError } = await supabase
+    .from("meetings")
+    .insert({
+      title: payload.title,
+      date: payload.date,
+      place: payload.place?.trim() || null,
+    })
+    .select("id")
+    .single();
+
+  if (meetingError || !meetingData?.id) {
+    throw new Error("CREATE_MEETING_FAILED");
+  }
+
+  const { error: memberError } = await supabase.from("meeting_members").insert(
+    members.map((member) => ({
+      meeting_id: meetingData.id,
+      name: member.name,
+      status: member.status,
+    })),
+  );
+
+  if (memberError) {
+    throw new Error("CREATE_MEMBER_FAILED");
+  }
+
+  const { data: finalData, error: selectError } = await supabase
+    .from("meetings")
+    .select(
+      `
+      id,
+      title,
+      date,
+      place,
+      created_at,
+      meeting_members ( id, name, status )
+    `,
+    )
+    .eq("id", meetingData.id)
+    .single();
+
+  if (selectError || !finalData) {
+    throw new Error("MEETING_NOT_FOUND");
+  }
+
+  return mapToMeeting(finalData as MeetingRow);
 }
 
 export async function updateMemberStatus(
   meetingId: string,
   payload: UpdateMemberStatusPayload,
 ): Promise<Meeting> {
-  const db = await loadDb();
+  const supabase = getSupabaseServerClient() as any;
   const status = toAttendance(payload.status);
 
   if (!status) {
     throw new Error("INVALID_STATUS");
   }
 
-  const meeting = db.meetings.find((item) => item.id === meetingId);
+  const { data: updatedRows, error: updateError } = await supabase
+    .from("meeting_members")
+    .update({ status })
+    .eq("meeting_id", meetingId)
+    .eq("id", payload.memberId)
+    .select("id")
+    .maybeSingle();
 
-  if (!meeting) {
-    throw new Error("NOT_FOUND_MEETING");
+  if (updateError) {
+    throw new Error("UPDATE_MEMBER_FAILED");
   }
 
-  const member = meeting.members.find((entry) => entry.id === payload.memberId);
-
-  if (!member) {
+  if (!updatedRows) {
     throw new Error("NOT_FOUND_MEMBER");
   }
 
-  member.status = status;
-  await saveDb(db);
-  return meeting;
+  const { data: meetingData, error: selectError } = await supabase
+    .from("meetings")
+    .select(
+      `
+      id,
+      title,
+      date,
+      place,
+      created_at,
+      meeting_members ( id, name, status )
+    `,
+    )
+    .eq("id", meetingId)
+    .single();
+
+  if (selectError || !meetingData) {
+    throw new Error("NOT_FOUND_MEETING");
+  }
+
+  return mapToMeeting(meetingData as MeetingRow);
 }
