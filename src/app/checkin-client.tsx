@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 import { Attendance, Meeting } from "@/lib/checkin-types";
 
@@ -55,10 +55,23 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [hasGoogleProvider, setHasGoogleProvider] = useState(false);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
 
   const isSharedMode = mode === "shared";
   const isPersonalMode = mode === "personal";
   const canEdit = isSharedMode || sessionStatus === "authenticated";
+
+  const parsedMembers = useMemo(
+    () =>
+      memberInput
+        .split("\n")
+        .map((name) => name.trim())
+        .filter(Boolean),
+    [memberInput],
+  );
+
+  const hasRequiredInputs =
+    title.trim().length > 0 && date.trim().length > 0 && parsedMembers.length > 0;
 
   const allAttending = useMemo(
     () => meetings.filter((meeting) => meeting.members.every((m) => m.status === "참석")),
@@ -107,13 +120,10 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   }, [isPersonalMode, sessionStatus, ownerToken, isSharedMode]);
 
   const submitMeeting = async () => {
-    const parsedMembers = memberInput
-      .split("\n")
-      .map((name) => name.trim())
-      .filter(Boolean);
+    setSubmitAttempted(true);
 
-    if (!title.trim() || !date.trim() || parsedMembers.length === 0) {
-      setError("제목, 일시, 참석자 입력은 필수입니다.");
+    if (!hasRequiredInputs) {
+      setError("필수 항목을 모두 입력해 주세요.");
       return;
     }
 
@@ -145,6 +155,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       setDate("");
       setPlace("");
       setMemberInput("");
+      setSubmitAttempted(false);
       setToast("체크인 링크가 생성되었습니다. 새 카드의 '체크인 링크 복사'로 공유하세요.");
       setTimeout(() => {
         setToast("");
@@ -158,6 +169,11 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void submitMeeting();
   };
 
   const updateStatus = async (meetingId: string, memberId: string, status: Attendance) => {
@@ -227,6 +243,11 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   const inputClass =
     "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100";
 
+  const getInputClass = (isInvalid = false) =>
+    `${inputClass} ${
+      isInvalid ? "border-rose-300 bg-rose-50/50 focus:border-rose-400 focus:ring-rose-100" : ""
+    }`;
+
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
@@ -292,48 +313,85 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
         {isPersonalMode && sessionStatus === "authenticated" ? (
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">새 체크인 만들기</h2>
-            <p className="mt-1 text-sm text-slate-500">제목, 일시, 참석자만 입력하면 즉시 체크인 링크가 생성됩니다.</p>
+            <p className="mt-1 text-sm text-slate-500">입력한 뒤 바로 링크를 전달해 참석 상태를 모아보세요.</p>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <input
-                value={title}
-                onChange={(event) => setTitle(event.currentTarget.value)}
-                placeholder="모임 제목"
-                className={inputClass}
-              />
-              <input
-                value={date}
-                onChange={(event) => setDate(event.currentTarget.value)}
-                placeholder="일시 (예: 2월 20일 오후 7시)"
-                className={inputClass}
-              />
-            </div>
-            <div className="mt-3">
-              <input
-                value={place}
-                onChange={(event) => setPlace(event.currentTarget.value)}
-                placeholder="장소 (선택)"
-                className={inputClass}
-              />
-            </div>
-            <div className="mt-3">
-              <textarea
-                value={memberInput}
-                onChange={(event) => setMemberInput(event.currentTarget.value)}
-                placeholder="참석자 이름을 줄바꿈으로 입력하세요\n예:\n홍길동\n김영희"
-                rows={4}
-                className={`${inputClass} resize-none`}
-              />
-            </div>
+            <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium text-slate-700">
+                    모임 제목 <span className="text-rose-500">*</span>
+                  </span>
+                  <input
+                    value={title}
+                    onChange={(event) => setTitle(event.currentTarget.value)}
+                    placeholder="예: 팀 회식"
+                    className={getInputClass(submitAttempted && !title.trim())}
+                  />
+                  {submitAttempted && !title.trim() ? (
+                    <p className="text-xs text-rose-600">모임 제목을 입력해 주세요.</p>
+                  ) : (
+                    <p className="text-xs text-slate-500">누가 어디서 모였는지 한 줄로 적어주세요.</p>
+                  )}
+                </label>
 
-            <button
-              type="button"
-              onClick={submitMeeting}
-              disabled={sessionStatus !== "authenticated" || !title.trim() || !date.trim() || !memberInput.trim() || isBusy}
-              className="mt-4 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50"
-            >
-              {isBusy ? "저장 중..." : "체크인 만들기"}
-            </button>
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium text-slate-700">
+                    일시 <span className="text-rose-500">*</span>
+                  </span>
+                  <input
+                    value={date}
+                    onChange={(event) => setDate(event.currentTarget.value)}
+                    placeholder="예: 2월 20일 오후 7시"
+                    className={getInputClass(submitAttempted && !date.trim())}
+                  />
+                  {submitAttempted && !date.trim() ? (
+                    <p className="text-xs text-rose-600">일시를 입력해 주세요.</p>
+                  ) : (
+                    <p className="text-xs text-slate-500">상세한 시간까지 적으면 공유자에게 도움돼요.</p>
+                  )}
+                </label>
+              </div>
+
+              <label className="space-y-1.5">
+                <span className="text-sm font-medium text-slate-700">장소</span>
+                <input
+                  value={place}
+                  onChange={(event) => setPlace(event.currentTarget.value)}
+                  placeholder="예: 서울 강남 OO카페"
+                  className={inputClass}
+                />
+                <p className="text-xs text-slate-500">선택 입력입니다. 비워두면 생략됩니다.</p>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-sm font-medium text-slate-700">
+                  참석자 <span className="text-rose-500">*</span>
+                </span>
+                <textarea
+                  value={memberInput}
+                  onChange={(event) => setMemberInput(event.currentTarget.value)}
+                  placeholder="한 줄에 한 명씩 입력하세요\n예:\n홍길동\n김영희"
+                  rows={4}
+                  className={`${getInputClass(submitAttempted && parsedMembers.length === 0)} resize-none`}
+                />
+                <div className="flex items-start justify-between gap-2 text-xs text-slate-500">
+                  <p>
+                    {submitAttempted && parsedMembers.length === 0
+                      ? "적어도 1명 이상의 참석자를 입력해 주세요."
+                      : `${parsedMembers.length}명 입력됨`}
+                  </p>
+                  <p className="whitespace-nowrap">(엔터로 구분)</p>
+                </div>
+              </label>
+
+              <button
+                type="submit"
+                disabled={sessionStatus !== "authenticated" || !hasRequiredInputs || isBusy}
+                className="rounded-full bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isBusy ? "저장 중..." : "체크인 만들기"}
+              </button>
+            </form>
           </section>
         ) : null}
 
