@@ -12,6 +12,12 @@ type CheckinClientProps = {
   ownerToken?: string;
 };
 
+type ParsedMembers = {
+  names: string[];
+  rawCount: number;
+  duplicates: string[];
+};
+
 const statusList: Attendance[] = ["참석", "불참", "보류"];
 
 const STATUS_CHIP: Record<Attendance, string> = {
@@ -43,6 +49,32 @@ function formatShareUrl(shareToken: string, origin: string) {
   return `${origin}/share/${shareToken}`;
 }
 
+function parseMemberInput(value: string): ParsedMembers {
+  const rawMembers = value
+    .split("\n")
+    .map((name) => name.trim())
+    .filter(Boolean);
+
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  const duplicates = new Set<string>();
+
+  for (const member of rawMembers) {
+    if (seen.has(member)) {
+      duplicates.add(member);
+      continue;
+    }
+    seen.add(member);
+    unique.push(member);
+  }
+
+  return {
+    names: unique,
+    rawCount: rawMembers.length,
+    duplicates: [...duplicates],
+  };
+}
+
 export default function CheckinClient({ mode = "personal", ownerToken = "" }: CheckinClientProps) {
   const { data: session, status: sessionStatus } = useSession();
 
@@ -61,17 +93,12 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   const isPersonalMode = mode === "personal";
   const canEdit = isSharedMode || sessionStatus === "authenticated";
 
-  const parsedMembers = useMemo(
-    () =>
-      memberInput
-        .split("\n")
-        .map((name) => name.trim())
-        .filter(Boolean),
-    [memberInput],
-  );
+  const parsedMembers = useMemo(() => parseMemberInput(memberInput), [memberInput]);
 
-  const hasRequiredInputs =
-    title.trim().length > 0 && date.trim().length > 0 && parsedMembers.length > 0;
+  const hasRequiredInputs = title.trim().length > 0 && date.trim().length > 0 && parsedMembers.names.length > 0;
+  const totalMembers = parsedMembers.rawCount;
+  const uniqueCount = parsedMembers.names.length;
+  const duplicateCount = parsedMembers.duplicates.length;
 
   const allAttending = useMemo(
     () => meetings.filter((meeting) => meeting.members.every((m) => m.status === "참석")),
@@ -140,7 +167,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
           title: title.trim(),
           date: date.trim(),
           place: place.trim(),
-          members: parsedMembers,
+          members: parsedMembers.names,
         }),
       });
 
@@ -156,10 +183,14 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       setPlace("");
       setMemberInput("");
       setSubmitAttempted(false);
-      setToast("체크인 링크가 생성되었습니다. 새 카드의 '체크인 링크 복사'로 공유하세요.");
+      setToast(
+        duplicateCount > 0
+          ? "중복된 참석자는 1회만 반영해 체크인이 생성되었습니다. 새 카드의 '체크인 링크 복사'로 공유하세요."
+          : "체크인 링크가 생성되었습니다. 새 카드의 '체크인 링크 복사'로 공유하세요.",
+      );
       setTimeout(() => {
         setToast("");
-      }, 1800);
+      }, 2200);
     } catch (e: unknown) {
       if (e instanceof Error) {
         setError(e.message);
@@ -175,6 +206,18 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     event.preventDefault();
     void submitMeeting();
   };
+
+  const resetDraft = () => {
+    setTitle("");
+    setDate("");
+    setPlace("");
+    setMemberInput("");
+    setSubmitAttempted(false);
+    setError("");
+  };
+
+  const isFormDirty =
+    title.trim().length > 0 || date.trim().length > 0 || place.trim().length > 0 || memberInput.trim().length > 0;
 
   const updateStatus = async (meetingId: string, memberId: string, status: Attendance) => {
     if (!canEdit) {
@@ -371,26 +414,39 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                   value={memberInput}
                   onChange={(event) => setMemberInput(event.currentTarget.value)}
                   placeholder="한 줄에 한 명씩 입력하세요\n예:\n홍길동\n김영희"
-                  rows={4}
-                  className={`${getInputClass(submitAttempted && parsedMembers.length === 0)} resize-none`}
+                  rows={5}
+                  className={`${getInputClass(submitAttempted && parsedMembers.names.length === 0)} resize-none`}
                 />
-                <div className="flex items-start justify-between gap-2 text-xs text-slate-500">
+                <div className="flex flex-wrap items-start justify-between gap-2 text-xs text-slate-500">
                   <p>
-                    {submitAttempted && parsedMembers.length === 0
-                      ? "적어도 1명 이상의 참석자를 입력해 주세요."
-                      : `${parsedMembers.length}명 입력됨`}
+                    {submitAttempted && parsedMembers.names.length === 0
+                      ? "최소 1명 이상의 참석자를 입력해 주세요."
+                      : duplicateCount > 0
+                        ? `중복 ${duplicateCount}개가 제거되어 ${uniqueCount}명으로 반영됩니다.`
+                        : `${totalMembers}명 입력됨`}
                   </p>
                   <p className="whitespace-nowrap">(엔터로 구분)</p>
                 </div>
               </label>
 
-              <button
-                type="submit"
-                disabled={sessionStatus !== "authenticated" || !hasRequiredInputs || isBusy}
-                className="rounded-full bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isBusy ? "저장 중..." : "체크인 만들기"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  disabled={sessionStatus !== "authenticated" || !hasRequiredInputs || isBusy}
+                  className="rounded-full bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isBusy ? "저장 중..." : "체크인 만들기"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={resetDraft}
+                  disabled={!isFormDirty || isBusy}
+                  className="rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  입력 초기화
+                </button>
+              </div>
             </form>
           </section>
         ) : null}
