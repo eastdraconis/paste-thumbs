@@ -50,11 +50,20 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   const isSharedMode = mode === "shared";
   const isPersonalMode = mode === "personal";
   const canEdit = isSharedMode || sessionStatus === "authenticated";
+  const shareToken = session?.user?.shareToken;
 
   const allAttending = useMemo(
     () => meetings.filter((meeting) => meeting.members.every((m) => m.status === "참석")),
     [meetings],
   );
+
+  const getShareUrl = () => {
+    if (!shareToken || typeof window === "undefined") {
+      return "";
+    }
+
+    return `${window.location.origin}/share/${shareToken}`;
+  };
 
   useEffect(() => {
     const loadProviders = async () => {
@@ -136,6 +145,10 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       setDate("");
       setPlace("");
       setMemberInput("");
+      setToast("새 체크인이 생성되었습니다. 위의 공유 링크를 눌러 참가 링크를 전달하세요.");
+      setTimeout(() => {
+        setToast("");
+      }, 1800);
     } catch (e: unknown) {
       if (e instanceof Error) {
         setError(e.message);
@@ -191,15 +204,36 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   };
 
   const copyShareLink = async () => {
-    const token = session?.user?.shareToken;
+    const link = getShareUrl();
 
-    if (!token || typeof window === "undefined") {
+    if (!link) {
       return;
     }
 
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}/share/${token}`);
+      await navigator.clipboard.writeText(link);
       setToast("공유 링크가 복사되었어요.");
+      setTimeout(() => {
+        setToast("");
+      }, 1800);
+    } catch {
+      setToast("복사를 실패했어요. 주소창에서 직접 복사해 주세요.");
+      setTimeout(() => {
+        setToast("");
+      }, 1800);
+    }
+  };
+
+  const copyMeetingShareLink = async (meetingTitle: string) => {
+    const link = getShareUrl();
+
+    if (!link) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(link);
+      setToast(`"${meetingTitle}" 체크인 링크가 복사되었어요.`);
       setTimeout(() => {
         setToast("");
       }, 1800);
@@ -214,7 +248,6 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   const inputClass =
     "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100";
 
-  const shareToken = session?.user?.shareToken;
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
@@ -357,6 +390,18 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                   </div>
 
                   <h3 className="mb-2 text-lg font-semibold text-slate-900">{meeting.title}</h3>
+                  {isPersonalMode && shareToken ? (
+                    <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+                      <p className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">공유 링크: /share/{shareToken}</p>
+                      <button
+                        type="button"
+                        onClick={() => copyMeetingShareLink(meeting.title)}
+                        className="rounded-full bg-emerald-600 px-3 py-1 font-medium text-white transition hover:bg-emerald-700"
+                      >
+                        링크 복사
+                      </button>
+                    </div>
+                  ) : null}
 
                   <div className="mb-3 flex flex-wrap gap-2 text-xs">
                     <span className="rounded-full border border-emerald-300 px-2 py-1 font-medium text-emerald-700">참석 {stats.참석}명</span>
