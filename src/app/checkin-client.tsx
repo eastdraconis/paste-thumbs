@@ -143,7 +143,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     mode: "onBlur",
   });
 
-  const { fields, append, remove, replace } = useFieldArray({
+  const { fields, append, replace } = useFieldArray({
     control,
     name: "attendees",
   });
@@ -243,6 +243,10 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     window.setTimeout(() => {
       setMemberInputMessage("");
     }, 1500);
+  };
+
+  const removeMember = (memberId: string) => {
+    replace(fields.filter((member) => member.id !== memberId).map((member) => ({ name: member.name })));
   };
 
   const getMemberInputMessage = () => {
@@ -506,7 +510,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
 
                 {memberCount > 0 ? (
                   <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2">
-                    {fields.map((member, index) => (
+                    {fields.map((member) => (
                       <span
                         key={member.id}
                         className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-white px-2.5 py-1 text-sm"
@@ -514,7 +518,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                         <span>{member.name}</span>
                         <button
                           type="button"
-                          onClick={() => remove(index)}
+                          onClick={() => removeMember(member.id)}
                           className="rounded-full px-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
                           aria-label={`${member.name} 삭제`}
                         >
