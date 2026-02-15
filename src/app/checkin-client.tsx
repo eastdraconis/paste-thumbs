@@ -166,11 +166,13 @@ export default function CheckinClient() {
                   value={title}
                   onChange={(event) => setTitle(event.currentTarget.value)}
                   placeholder="모임 제목"
+                  overrides={{}}
                 />
                 <Input
                   value={date}
                   onChange={(event) => setDate(event.currentTarget.value)}
                   placeholder="일시 (예: 2월 20일 오후 7시)"
+                  overrides={{}}
                 />
               </div>
               <div className="mt-3">
@@ -178,6 +180,7 @@ export default function CheckinClient() {
                   value={place}
                   onChange={(event) => setPlace(event.currentTarget.value)}
                   placeholder="장소 (선택)"
+                  overrides={{}}
                 />
               </div>
               <div className="mt-3">
@@ -186,6 +189,7 @@ export default function CheckinClient() {
                   onChange={(event) => setMemberInput(event.currentTarget.value)}
                   placeholder="참석자 이름을 줄바꿈으로 입력하세요\n예:\n홍길동\n김영희"
                   rows={4}
+                  overrides={{}}
                 />
               </div>
 
@@ -193,6 +197,7 @@ export default function CheckinClient() {
                 onClick={submitMeeting}
                 disabled={!title.trim() || !date.trim() || !memberInput.trim() || isBusy}
                 className="mt-4"
+                overrides={{}}
               >
                 {isBusy ? "저장 중..." : "체크인 만들기"}
               </Button>
@@ -202,7 +207,7 @@ export default function CheckinClient() {
 
             <section className="grid gap-4">
               {meetings.length === 0 ? (
-                <Card>
+                <Card overrides={{}}>
                   <p className="text-sm text-slate-500">아직 만든 체크인이 없어요. 위 폼에서 모임을 등록해보세요.</p>
                 </Card>
               ) : (
@@ -210,7 +215,7 @@ export default function CheckinClient() {
                   const stats = attendanceStats(meeting.members);
 
                   return (
-                    <Card key={meeting.id} title={meeting.title}>
+                    <Card key={meeting.id} title={meeting.title} overrides={{}}>
                       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-slate-600">
                         <span className="rounded-full bg-slate-100 px-2 py-1">{meeting.date}</span>
                         {meeting.place ? <span className="rounded-full bg-slate-100 px-2 py-1">{meeting.place}</span> : null}
