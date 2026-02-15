@@ -382,15 +382,15 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                     일시 <span className="text-rose-500">*</span>
                   </span>
                   <input
+                    type="datetime-local"
                     value={date}
                     onChange={(event) => setDate(event.currentTarget.value)}
-                    placeholder="예: 2월 20일 오후 7시"
                     className={getInputClass(submitAttempted && !date.trim())}
                   />
                   {submitAttempted && !date.trim() ? (
                     <p className="text-xs text-rose-600">일시를 입력해 주세요.</p>
                   ) : (
-                    <p className="text-xs text-slate-500">상세한 시간까지 적으면 공유자에게 도움돼요.</p>
+                    <p className="text-xs text-slate-500">날짜와 시간을 한 번에 선택할 수 있습니다.</p>
                   )}
                 </label>
               </div>
