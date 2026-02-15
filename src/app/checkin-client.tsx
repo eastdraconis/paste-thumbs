@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 import { Attendance, Meeting } from "@/lib/checkin-types";
 
@@ -14,7 +14,6 @@ type CheckinClientProps = {
 
 type ParsedMembers = {
   names: string[];
-  rawCount: number;
   duplicates: string[];
 };
 
@@ -50,29 +49,26 @@ function formatShareUrl(shareToken: string, origin: string) {
 }
 
 function parseMemberInput(value: string): ParsedMembers {
-  const rawMembers = value
-    .split("\n")
+  const raw = value
+    .split(/\r?\n|,/)
     .map((name) => name.trim())
     .filter(Boolean);
 
-  const seen = new Set<string>();
-  const unique: string[] = [];
   const duplicates = new Set<string>();
+  const seen = new Set<string>();
+  const names: string[] = [];
 
-  for (const member of rawMembers) {
+  for (const member of raw) {
     if (seen.has(member)) {
       duplicates.add(member);
       continue;
     }
+
     seen.add(member);
-    unique.push(member);
+    names.push(member);
   }
 
-  return {
-    names: unique,
-    rawCount: rawMembers.length,
-    duplicates: [...duplicates],
-  };
+  return { names, duplicates: [...duplicates] };
 }
 
 export default function CheckinClient({ mode = "personal", ownerToken = "" }: CheckinClientProps) {
@@ -82,6 +78,8 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   const [date, setDate] = useState("");
   const [place, setPlace] = useState("");
   const [memberInput, setMemberInput] = useState("");
+  const [memberItems, setMemberItems] = useState<string[]>([]);
+  const [memberInputMessage, setMemberInputMessage] = useState("");
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState("");
@@ -93,12 +91,8 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   const isPersonalMode = mode === "personal";
   const canEdit = isSharedMode || sessionStatus === "authenticated";
 
-  const parsedMembers = useMemo(() => parseMemberInput(memberInput), [memberInput]);
-
-  const hasRequiredInputs = title.trim().length > 0 && date.trim().length > 0 && parsedMembers.names.length > 0;
-  const totalMembers = parsedMembers.rawCount;
-  const uniqueCount = parsedMembers.names.length;
-  const duplicateCount = parsedMembers.duplicates.length;
+  const hasRequiredInputs = title.trim().length > 0 && date.trim().length > 0 && memberItems.length > 0;
+  const memberCount = memberItems.length;
 
   const allAttending = useMemo(
     () => meetings.filter((meeting) => meeting.members.every((m) => m.status === "참석")),
@@ -146,6 +140,50 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     loadMeetings();
   }, [isPersonalMode, sessionStatus, ownerToken, isSharedMode]);
 
+  const getMemberInputMessages = () => {
+    if (submitAttempted && memberCount === 0) {
+      return "최소 1명 이상의 참석자를 추가해 주세요.";
+    }
+
+    return memberInputMessage || `${memberCount}명 입력됨`;
+  };
+
+  const addMembers = (rawValue: string) => {
+    const parsed = parseMemberInput(rawValue);
+
+    if (parsed.names.length === 0) {
+      setMemberInput("");
+      setMemberInputMessage("이름이 비어 있어요.");
+      return;
+    }
+
+    const existingSet = new Set(memberItems);
+    const newMembers = parsed.names.filter((name) => !existingSet.has(name));
+    const duplicateCount = parsed.names.length - newMembers.length;
+
+    if (duplicateCount > 0) {
+      setMemberInputMessage(`${duplicateCount}명 중복은 제외되고 추가됐어요.`);
+    } else {
+      setMemberInputMessage(`"${newMembers.length}명"이(가) 추가됐어요.`);
+    }
+
+    if (newMembers.length === 0) {
+      setMemberInput("");
+      return;
+    }
+
+    setMemberItems((prev) => [...prev, ...newMembers]);
+    setMemberInput("");
+
+    window.setTimeout(() => {
+      setMemberInputMessage((current) => (current.startsWith("중복") ? "" : current));
+    }, 1500);
+  };
+
+  const removeMember = (index: number) => {
+    setMemberItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const submitMeeting = async () => {
     setSubmitAttempted(true);
 
@@ -167,7 +205,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
           title: title.trim(),
           date: date.trim(),
           place: place.trim(),
-          members: parsedMembers.names,
+          members: memberItems,
         }),
       });
 
@@ -182,11 +220,11 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       setDate("");
       setPlace("");
       setMemberInput("");
+      setMemberItems([]);
+      setMemberInputMessage("");
       setSubmitAttempted(false);
       setToast(
-        duplicateCount > 0
-          ? "중복된 참석자는 1회만 반영해 체크인이 생성되었습니다. 새 카드의 '체크인 링크 복사'로 공유하세요."
-          : "체크인 링크가 생성되었습니다. 새 카드의 '체크인 링크 복사'로 공유하세요.",
+        "체크인 링크가 생성되었습니다. 새 카드의 '체크인 링크 복사'로 공유하세요.",
       );
       setTimeout(() => {
         setToast("");
@@ -207,17 +245,30 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     void submitMeeting();
   };
 
+  const handleMemberKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      addMembers(memberInput);
+    }
+  };
+
   const resetDraft = () => {
     setTitle("");
     setDate("");
     setPlace("");
     setMemberInput("");
+    setMemberItems([]);
+    setMemberInputMessage("");
     setSubmitAttempted(false);
     setError("");
   };
 
   const isFormDirty =
-    title.trim().length > 0 || date.trim().length > 0 || place.trim().length > 0 || memberInput.trim().length > 0;
+    title.trim().length > 0 ||
+    date.trim().length > 0 ||
+    place.trim().length > 0 ||
+    memberInput.trim().length > 0 ||
+    memberItems.length > 0;
 
   const updateStatus = async (meetingId: string, memberId: string, status: Attendance) => {
     if (!canEdit) {
@@ -410,22 +461,38 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                 <span className="text-sm font-medium text-slate-700">
                   참석자 <span className="text-rose-500">*</span>
                 </span>
-                <textarea
+
+                {memberItems.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2">
+                    {memberItems.map((member, index) => (
+                      <span
+                        key={`${member}-${index}`}
+                        className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-white px-2.5 py-1 text-sm"
+                      >
+                        <span>{member}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeMember(index)}
+                          className="rounded-full px-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                          aria-label={`${member} 삭제`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+
+                <input
                   value={memberInput}
                   onChange={(event) => setMemberInput(event.currentTarget.value)}
-                  placeholder="한 줄에 한 명씩 입력하세요\n예:\n홍길동\n김영희"
-                  rows={5}
-                  className={`${getInputClass(submitAttempted && parsedMembers.names.length === 0)} resize-none`}
+                  onKeyDown={handleMemberKeyDown}
+                  placeholder="참석자 이름을 입력하고 엔터로 추가"
+                  className={`${getInputClass(submitAttempted && memberItems.length === 0)} resize-none`}
                 />
                 <div className="flex flex-wrap items-start justify-between gap-2 text-xs text-slate-500">
-                  <p>
-                    {submitAttempted && parsedMembers.names.length === 0
-                      ? "최소 1명 이상의 참석자를 입력해 주세요."
-                      : duplicateCount > 0
-                        ? `중복 ${duplicateCount}개가 제거되어 ${uniqueCount}명으로 반영됩니다.`
-                        : `${totalMembers}명 입력됨`}
-                  </p>
-                  <p className="whitespace-nowrap">(엔터로 구분)</p>
+                  <p>{getMemberInputMessages()}</p>
+                  <p className="whitespace-nowrap">(엔터로 추가)</p>
                 </div>
               </label>
 
