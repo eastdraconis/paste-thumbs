@@ -13,6 +13,7 @@ export type Meeting = {
   place: string;
   members: Member[];
   createdAt: string;
+  shareToken: string;
 };
 
 export type NewMeetingPayload = {

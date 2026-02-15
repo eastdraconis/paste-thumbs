@@ -11,6 +11,10 @@ function isOwnerColumnMissing(errorMessage: string): boolean {
   return errorMessage.includes("owner_email") || errorMessage.includes("owner_share_token") || errorMessage.includes("column");
 }
 
+function isShareTokenColumnMissing(errorMessage: string): boolean {
+  return errorMessage.includes("share_token") || isOwnerColumnMissing(errorMessage);
+}
+
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
@@ -41,6 +45,14 @@ export async function PATCH(
       );
     }
 
+    const isOwnerShareTokenValid =
+      Boolean(ownerToken) &&
+      Boolean(meetingOwner.owner_share_token) &&
+      ownerToken === meetingOwner.owner_share_token;
+
+    const isMeetingShareTokenValid =
+      Boolean(ownerToken) && Boolean(meetingOwner.share_token) && ownerToken === meetingOwner.share_token;
+
     if (!ownerToken) {
       const session = await getServerSession(authOptions);
       const email = session?.user?.email;
@@ -53,7 +65,7 @@ export async function PATCH(
           { status: 403 },
         );
       }
-    } else if (!meetingOwner.owner_share_token || ownerToken !== meetingOwner.owner_share_token) {
+    } else if (!isOwnerShareTokenValid && !isMeetingShareTokenValid) {
       return NextResponse.json(
         {
           message: "공유 링크가 유효하지 않습니다.",
@@ -69,11 +81,11 @@ export async function PATCH(
 
     return NextResponse.json(updated);
   } catch (error: unknown) {
-    if (error instanceof Error && isOwnerColumnMissing(error.message)) {
+    if (error instanceof Error && isShareTokenColumnMissing(error.message)) {
       return NextResponse.json(
         {
           message:
-            "DB 스키마 업데이트가 필요합니다. meetings 테이블에 owner_email / owner_share_token 컬럼을 추가해 주세요.",
+            "DB 스키마 업데이트가 필요합니다. meetings 테이블에 share_token / owner_email / owner_share_token 컬럼을 추가해 주세요.",
         },
         { status: 500 },
       );

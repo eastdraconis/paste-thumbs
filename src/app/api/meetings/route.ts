@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { getMeetings, getMeetingsByOwnerToken, createMeeting } from "@/lib/checkin-store";
+import {
+  getMeetings,
+  getMeetingsByOwnerToken,
+  getMeetingByShareToken,
+  createMeeting,
+} from "@/lib/checkin-store";
 import { ownerShareToken } from "@/lib/auth";
 import { authOptions } from "@/lib/auth";
 import { NewMeetingPayload } from "@/lib/checkin-types";
@@ -11,6 +16,10 @@ function isInvalidApiKeyError(error: Error): boolean {
 
 function isOwnerColumnMissing(errorMessage: string): boolean {
   return errorMessage.includes("owner_email") || errorMessage.includes("owner_share_token") || errorMessage.includes("column");
+}
+
+function isShareTokenColumnMissing(errorMessage: string): boolean {
+  return errorMessage.includes("share_token") || isOwnerColumnMissing(errorMessage);
 }
 
 function resolveOwnerToken(email?: string): string {
@@ -25,6 +34,12 @@ export async function GET(request: NextRequest) {
   try {
     const url = new URL(request.url);
     const ownerToken = url.searchParams.get("ownerToken") || "";
+    const meetingToken = url.searchParams.get("meetingToken") || "";
+
+    if (meetingToken) {
+      const meeting = await getMeetingByShareToken(meetingToken);
+      return NextResponse.json(meeting ? [meeting] : []);
+    }
 
     if (ownerToken) {
       const meetings = await getMeetingsByOwnerToken(ownerToken);
@@ -47,11 +62,11 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(meetings);
   } catch (error: unknown) {
-    if (error instanceof Error && isOwnerColumnMissing(error.message)) {
+    if (error instanceof Error && isShareTokenColumnMissing(error.message)) {
       return NextResponse.json(
         {
           message:
-            "DB 스키마 업데이트가 필요합니다. meetings 테이블에 owner_email / owner_share_token 컬럼을 추가해 주세요.",
+            "DB 스키마 업데이트가 필요합니다. meetings 테이블에 share_token / owner_email / owner_share_token 컬럼을 추가해 주세요.",
         },
         { status: 500 },
       );
@@ -130,11 +145,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(meeting, { status: 201 });
   } catch (error: unknown) {
-    if (error instanceof Error && isOwnerColumnMissing(error.message)) {
+    if (error instanceof Error && isShareTokenColumnMissing(error.message)) {
       return NextResponse.json(
         {
           message:
-            "DB 스키마 업데이트가 필요합니다. meetings 테이블에 owner_email / owner_share_token 컬럼을 추가해 주세요.",
+            "DB 스키마 업데이트가 필요합니다. meetings 테이블에 share_token / owner_email / owner_share_token 컬럼을 추가해 주세요.",
         },
         { status: 500 },
       );

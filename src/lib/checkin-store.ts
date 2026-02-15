@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { randomUUID } from "crypto";
 import { Attendance, Meeting, NewMeetingPayload, UpdateMemberStatusPayload } from "./checkin-types";
 import { getSupabaseServerClient } from "./supabase";
 
@@ -10,6 +11,7 @@ type MeetingRow = {
   created_at: string;
   owner_email: string | null;
   owner_share_token: string | null;
+  share_token: string | null;
   meeting_members: {
     id: string;
     name: string;
@@ -21,6 +23,7 @@ type MeetingOwner = {
   id: string;
   owner_email: string | null;
   owner_share_token: string | null;
+  share_token: string | null;
 };
 
 function toAttendance(value: string): Attendance | undefined {
@@ -52,6 +55,7 @@ function mapToMeeting(row: MeetingRow): Meeting {
     date: row.date,
     place: row.place ?? "",
     createdAt: row.created_at,
+    shareToken: row.share_token ?? "",
     members: (row.meeting_members ?? []).map((member) => ({
       id: member.id,
       name: member.name,
@@ -69,6 +73,7 @@ function meetingSelectClause(): string {
       created_at,
       owner_email,
       owner_share_token,
+      share_token,
       meeting_members ( id, name, status )
     `;
 }
@@ -78,7 +83,7 @@ export async function getMeetingOwner(meetingId: string): Promise<MeetingOwner |
 
   const { data, error } = await supabase
     .from("meetings")
-    .select("id, owner_email, owner_share_token")
+    .select("id, owner_email, owner_share_token, share_token")
     .eq("id", meetingId)
     .single();
 
@@ -94,6 +99,7 @@ export async function getMeetingOwner(meetingId: string): Promise<MeetingOwner |
     id: data.id as string,
     owner_email: data.owner_email as string | null,
     owner_share_token: data.owner_share_token as string | null,
+    share_token: data.share_token as string | null,
   };
 }
 
@@ -134,6 +140,26 @@ export async function getMeetingsByOwnerToken(ownerToken: string): Promise<Meeti
   return (data as MeetingRow[] | undefined ?? []).map((row) => mapToMeeting(row));
 }
 
+export async function getMeetingByShareToken(shareToken: string): Promise<Meeting | null> {
+  const supabase = getSupabaseServerClient() as any;
+
+  const { data, error } = await supabase
+    .from("meetings")
+    .select(meetingSelectClause())
+    .eq("share_token", shareToken)
+    .single();
+
+  if (error) {
+    return null;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapToMeeting(data as MeetingRow);
+}
+
 export async function createMeeting(payload: NewMeetingPayload, ownerEmail: string, ownerShareToken: string): Promise<Meeting> {
   const supabase = getSupabaseServerClient() as any;
   const members = payload.members
@@ -156,6 +182,7 @@ export async function createMeeting(payload: NewMeetingPayload, ownerEmail: stri
       place: payload.place?.trim() || null,
       owner_email: ownerEmail,
       owner_share_token: ownerShareToken,
+      share_token: randomUUID().replace(/-/g, ""),
     })
     .select("id")
     .single();

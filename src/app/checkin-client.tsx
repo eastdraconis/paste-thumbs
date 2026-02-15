@@ -30,8 +30,17 @@ function attendanceStats(members: Meeting["members"]) {
   );
 }
 
-function buildApiUrl(path: string, ownerToken?: string) {
-  return ownerToken ? `${path}?ownerToken=${encodeURIComponent(ownerToken)}` : path;
+function buildApiUrl(path: string, token?: string, isSharedMode = false) {
+  if (!token) {
+    return path;
+  }
+
+  const queryKey = isSharedMode ? "meetingToken" : "ownerToken";
+  return `${path}?${queryKey}=${encodeURIComponent(token)}`;
+}
+
+function formatShareUrl(shareToken: string, origin: string) {
+  return `${origin}/share/${shareToken}`;
 }
 
 export default function CheckinClient({ mode = "personal", ownerToken = "" }: CheckinClientProps) {
@@ -50,20 +59,11 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   const isSharedMode = mode === "shared";
   const isPersonalMode = mode === "personal";
   const canEdit = isSharedMode || sessionStatus === "authenticated";
-  const shareToken = session?.user?.shareToken;
 
   const allAttending = useMemo(
     () => meetings.filter((meeting) => meeting.members.every((m) => m.status === "참석")),
     [meetings],
   );
-
-  const getShareUrl = () => {
-    if (!shareToken || typeof window === "undefined") {
-      return "";
-    }
-
-    return `${window.location.origin}/share/${shareToken}`;
-  };
 
   useEffect(() => {
     const loadProviders = async () => {
@@ -89,7 +89,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       setError("");
 
       try {
-        const response = await fetch(buildApiUrl("/api/meetings", ownerToken));
+        const response = await fetch(buildApiUrl("/api/meetings", ownerToken, isSharedMode));
         const result = (await response.json()) as Meeting[];
 
         if (!response.ok) {
@@ -104,7 +104,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
 
     loadProviders();
     loadMeetings();
-  }, [isPersonalMode, sessionStatus, ownerToken]);
+  }, [isPersonalMode, sessionStatus, ownerToken, isSharedMode]);
 
   const submitMeeting = async () => {
     const parsedMembers = memberInput
@@ -145,7 +145,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       setDate("");
       setPlace("");
       setMemberInput("");
-      setToast("새 체크인이 생성되었습니다. 위의 공유 링크를 눌러 참가 링크를 전달하세요.");
+      setToast("체크인 링크가 생성되었습니다. 새 카드의 '체크인 링크 복사'로 공유하세요.");
       setTimeout(() => {
         setToast("");
       }, 1800);
@@ -168,7 +168,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     setError("");
 
     try {
-      const response = await fetch(buildApiUrl(`/api/meetings/${meetingId}`, ownerToken), {
+      const response = await fetch(buildApiUrl(`/api/meetings/${meetingId}`, ownerToken, isSharedMode), {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -203,37 +203,16 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     }
   };
 
-  const copyShareLink = async () => {
-    const link = getShareUrl();
-
-    if (!link) {
+  const copyShareLink = async (shareToken: string, label: string) => {
+    if (typeof window === "undefined") {
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(link);
-      setToast("공유 링크가 복사되었어요.");
-      setTimeout(() => {
-        setToast("");
-      }, 1800);
-    } catch {
-      setToast("복사를 실패했어요. 주소창에서 직접 복사해 주세요.");
-      setTimeout(() => {
-        setToast("");
-      }, 1800);
-    }
-  };
-
-  const copyMeetingShareLink = async (meetingTitle: string) => {
-    const link = getShareUrl();
-
-    if (!link) {
-      return;
-    }
+    const link = formatShareUrl(shareToken, window.location.origin);
 
     try {
       await navigator.clipboard.writeText(link);
-      setToast(`"${meetingTitle}" 체크인 링크가 복사되었어요.`);
+      setToast(`"${label}" 체크인 링크가 복사되었어요.`);
       setTimeout(() => {
         setToast("");
       }, 1800);
@@ -247,7 +226,6 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
 
   const inputClass =
     "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100";
-
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
@@ -269,7 +247,9 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                   <span className="rounded-full bg-white px-3 py-1 text-sm text-slate-500">로그인 상태 확인중...</span>
                 ) : sessionStatus === "authenticated" ? (
                   <>
-                    <div className="rounded-full bg-white px-3 py-1 text-sm text-slate-700">{session.user?.email || "로그인됨"}</div>
+                    <div className="rounded-full bg-white px-3 py-1 text-sm text-slate-700">
+                      {session.user?.email || "로그인됨"}
+                    </div>
                     <button
                       type="button"
                       onClick={() => signOut({ callbackUrl: "/" })}
@@ -277,15 +257,6 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                     >
                       로그아웃
                     </button>
-                    {shareToken ? (
-                      <button
-                        type="button"
-                        onClick={copyShareLink}
-                        className="rounded-full bg-slate-900 px-3 py-1 text-sm font-semibold text-white transition hover:bg-slate-700"
-                      >
-                        공유 링크 복사
-                      </button>
-                    ) : null}
                   </>
                 ) : (
                   <div className="rounded-full bg-white px-3 py-2 text-xs text-slate-700">
@@ -321,7 +292,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
         {isPersonalMode && sessionStatus === "authenticated" ? (
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">새 체크인 만들기</h2>
-            <p className="mt-1 text-sm text-slate-500">제목, 일시, 참석자만 입력하면 즉시 공유 링크가 생성됩니다.</p>
+            <p className="mt-1 text-sm text-slate-500">제목, 일시, 참석자만 입력하면 즉시 체크인 링크가 생성됩니다.</p>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <input
@@ -390,15 +361,14 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
                   </div>
 
                   <h3 className="mb-2 text-lg font-semibold text-slate-900">{meeting.title}</h3>
-                  {isPersonalMode && shareToken ? (
+                  {meeting.shareToken ? (
                     <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-                      <p className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">공유 링크: /share/{shareToken}</p>
                       <button
                         type="button"
-                        onClick={() => copyMeetingShareLink(meeting.title)}
+                        onClick={() => copyShareLink(meeting.shareToken, meeting.title)}
                         className="rounded-full bg-emerald-600 px-3 py-1 font-medium text-white transition hover:bg-emerald-700"
                       >
-                        링크 복사
+                        체크인 링크 복사
                       </button>
                     </div>
                   ) : null}
@@ -449,9 +419,6 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
           <p className="mt-2 text-sm text-slate-500">
             전체 {meetings.length}개 체크인 중 <strong>{allAttending.length}</strong>개가 모두 참석으로 확정됐습니다.
           </p>
-          {shareToken ? (
-            <div className="mt-2 text-xs text-slate-500">개인 공유 링크: <span className="font-mono">/share/{shareToken}</span></div>
-          ) : null}
         </section>
       </div>
     </main>
