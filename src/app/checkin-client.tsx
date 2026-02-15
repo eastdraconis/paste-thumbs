@@ -17,6 +17,11 @@ type ParsedMembers = {
   duplicates: string[];
 };
 
+type Attendee = {
+  id: string;
+  name: string;
+};
+
 const statusList: Attendance[] = ["참석", "불참", "보류"];
 
 const STATUS_CHIP: Record<Attendance, string> = {
@@ -78,7 +83,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   const [date, setDate] = useState("");
   const [place, setPlace] = useState("");
   const [memberInput, setMemberInput] = useState("");
-  const [memberItems, setMemberItems] = useState<string[]>([]);
+  const [memberItems, setMemberItems] = useState<Attendee[]>([]);
   const [memberInputMessage, setMemberInputMessage] = useState("");
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [isBusy, setIsBusy] = useState(false);
@@ -140,6 +145,8 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     loadMeetings();
   }, [isPersonalMode, sessionStatus, ownerToken, isSharedMode]);
 
+  const createMemberId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
   const getMemberInputMessages = () => {
     if (submitAttempted && memberCount === 0) {
       return "최소 1명 이상의 참석자를 추가해 주세요.";
@@ -157,7 +164,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       return;
     }
 
-    const existingSet = new Set(memberItems);
+    const existingSet = new Set(memberItems.map((item) => item.name));
     const newMembers = parsed.names.filter((name) => !existingSet.has(name));
     const duplicateCount = parsed.names.length - newMembers.length;
 
@@ -172,7 +179,13 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       return;
     }
 
-    setMemberItems((prev) => [...prev, ...newMembers]);
+    setMemberItems((prev) => [
+      ...prev,
+      ...newMembers.map((name) => ({
+        id: createMemberId(),
+        name,
+      })),
+    ]);
     setMemberInput("");
 
     window.setTimeout(() => {
@@ -180,8 +193,8 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     }, 1500);
   };
 
-  const removeMember = (index: number) => {
-    setMemberItems((prev) => prev.filter((_, i) => i !== index));
+  const removeMember = (id: string) => {
+    setMemberItems((prev) => prev.filter((member) => member.id !== id));
   };
 
   const submitMeeting = async () => {
@@ -205,7 +218,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
           title: title.trim(),
           date: date.trim(),
           place: place.trim(),
-          members: memberItems,
+          members: memberItems.map((member) => member.name),
         }),
       });
 
@@ -464,17 +477,17 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
 
                 {memberItems.length > 0 ? (
                   <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2">
-                    {memberItems.map((member, index) => (
+                    {memberItems.map((member) => (
                       <span
-                        key={`${member}-${index}`}
+                        key={member.id}
                         className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-white px-2.5 py-1 text-sm"
                       >
-                        <span>{member}</span>
+                        <span>{member.name}</span>
                         <button
                           type="button"
-                          onClick={() => removeMember(index)}
+                          onClick={() => removeMember(member.id)}
                           className="rounded-full px-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
-                          aria-label={`${member} 삭제`}
+                          aria-label={`${member.name} 삭제`}
                         >
                           ×
                         </button>
