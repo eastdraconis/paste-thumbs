@@ -1,5 +1,11 @@
 import CheckinLoader from "@/app/checkin-loader";
 
-export default function SharePage({ params }: { params: { token: string } }) {
-  return <CheckinLoader mode="shared" ownerToken={params.token} />;
+export default async function SharePage({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}) {
+  const { token } = await params;
+
+  return <CheckinLoader mode="shared" ownerToken={token} />;
 }

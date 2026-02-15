@@ -77,6 +77,8 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
         return;
       }
 
+      setError("");
+
       try {
         const response = await fetch(buildApiUrl("/api/meetings", ownerToken));
         const result = (await response.json()) as Meeting[];
