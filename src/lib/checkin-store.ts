@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { Attendance, Meeting, NewMeetingPayload, UpdateMemberStatusPayload } from "./checkin-types";
 import { getSupabaseServerClient } from "./supabase";
 
@@ -26,6 +26,54 @@ type MeetingOwner = {
   share_token: string | null;
 };
 
+const FALLBACK_SHARE_TOKEN_SALT = "legacy-checkin-share";
+
+function buildShareToken(meetingId: string, ownerShareToken: string | null): string {
+  return createHash("sha256").update(`${meetingId}:${ownerShareToken ?? FALLBACK_SHARE_TOKEN_SALT}`).digest("hex");
+}
+
+async function ensureShareTokens(rows: MeetingRow[], supabase: any): Promise<void> {
+  const missingRows = rows.filter((row) => !row.share_token);
+
+  if (missingRows.length === 0) {
+    return;
+  }
+
+  const promises = missingRows.map(async (row) => {
+    const token = buildShareToken(row.id, row.owner_share_token);
+
+    row.share_token = token;
+
+    const { error } = await supabase
+      .from("meetings")
+      .update({ share_token: token })
+      .eq("id", row.id)
+      .select("id");
+
+    return { error, meetingId: row.id };
+  });
+
+  const results = await Promise.allSettled(promises);
+
+  results.forEach((result, index) => {
+    if (result.status !== "fulfilled") {
+      const target = missingRows[index];
+      console.warn("share_token backfill failed", {
+        meetingId: target.id,
+        reason: result.status === "rejected" ? result.reason : "unknown",
+      });
+      return;
+    }
+
+    if (result.value.error) {
+      console.warn("share_token backfill failed", {
+        meetingId: result.value.meetingId,
+        reason: result.value.error,
+      });
+    }
+  });
+}
+
 function toAttendance(value: string): Attendance | undefined {
   if (value === "참석" || value === "불참" || value === "보류") {
     return value;
@@ -49,13 +97,15 @@ function formatDbError(error: unknown): string {
 }
 
 function mapToMeeting(row: MeetingRow): Meeting {
+  const shareToken = row.share_token ?? buildShareToken(row.id, row.owner_share_token);
+
   return {
     id: row.id,
     title: row.title,
     date: row.date,
     place: row.place ?? "",
     createdAt: row.created_at,
-    shareToken: row.share_token ?? "",
+    shareToken,
     members: (row.meeting_members ?? []).map((member) => ({
       id: member.id,
       name: member.name,
@@ -121,7 +171,20 @@ export async function getMeetings(ownerEmail?: string): Promise<Meeting[]> {
     throw new Error(`DB_ERROR: ${formatDbError(error)}`);
   }
 
-  return (data as MeetingRow[] | undefined ?? []).map((row) => mapToMeeting(row));
+  const rows = (data as MeetingRow[] | undefined ?? []).map((row) => {
+    if (row.share_token) {
+      return row;
+    }
+
+    return {
+      ...row,
+      share_token: buildShareToken(row.id, row.owner_share_token),
+    };
+  });
+
+  await ensureShareTokens(rows, supabase);
+
+  return rows.map((row) => mapToMeeting(row));
 }
 
 export async function getMeetingsByOwnerToken(ownerToken: string): Promise<Meeting[]> {
@@ -137,7 +200,20 @@ export async function getMeetingsByOwnerToken(ownerToken: string): Promise<Meeti
     throw new Error(`DB_ERROR: ${formatDbError(error)}`);
   }
 
-  return (data as MeetingRow[] | undefined ?? []).map((row) => mapToMeeting(row));
+  const rows = (data as MeetingRow[] | undefined ?? []).map((row) => {
+    if (row.share_token) {
+      return row;
+    }
+
+    return {
+      ...row,
+      share_token: buildShareToken(row.id, row.owner_share_token),
+    };
+  });
+
+  await ensureShareTokens(rows, supabase);
+
+  return rows.map((row) => mapToMeeting(row));
 }
 
 export async function getMeetingByShareToken(shareToken: string): Promise<Meeting | null> {
