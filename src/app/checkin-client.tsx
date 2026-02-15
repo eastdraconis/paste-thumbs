@@ -3,27 +3,12 @@
 import { BaseProvider, LightTheme } from "baseui";
 import { Client as Styletron } from "styletron-engine-atomic";
 import { Provider as StyletronProvider } from "styletron-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "baseui/button";
 import { Input } from "baseui/input";
 import { Textarea } from "baseui/textarea";
 import { Card } from "baseui/card";
-
-type Attendance = "참석" | "불참" | "보류";
-
-type Member = {
-  id: string;
-  name: string;
-  status: Attendance;
-};
-
-type Meeting = {
-  id: string;
-  title: string;
-  date: string;
-  place: string;
-  members: Member[];
-};
+import { Attendance, Meeting } from "@/lib/checkin-types";
 
 const statusList: Attendance[] = ["참석", "불참", "보류"];
 
@@ -35,7 +20,7 @@ const STATUS_CHIP: Record<Attendance, string> = {
 
 const engine = new Styletron();
 
-function attendanceStats(members: Member[]) {
+function attendanceStats(members: Meeting["members"]) {
   return members.reduce<Record<Attendance, number>>(
     (acc, member) => {
       acc[member.status] += 1;
@@ -51,55 +36,120 @@ export default function CheckinClient() {
   const [place, setPlace] = useState("");
   const [memberInput, setMemberInput] = useState("");
   const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [isBusy, setIsBusy] = useState(false);
+  const [error, setError] = useState("");
 
   const allAttending = useMemo(
     () => meetings.filter((meeting) => meeting.members.every((m) => m.status === "참석")),
     [meetings],
   );
 
-  const submitMeeting = () => {
+  useEffect(() => {
+    const loadMeetings = async () => {
+      try {
+        const response = await fetch("/api/meetings");
+        const result = (await response.json()) as Meeting[];
+
+        if (!response.ok) {
+          throw new Error("모임 목록을 불러오지 못했습니다.");
+        }
+
+        setMeetings(result);
+      } catch {
+        setError("모임 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      }
+    };
+
+    loadMeetings();
+  }, []);
+
+  const submitMeeting = async () => {
     const parsedMembers = memberInput
       .split("\n")
       .map((name) => name.trim())
-      .filter(Boolean)
-      .map((name) => ({
-        id: crypto.randomUUID(),
-        name,
-        status: "보류" as Attendance,
-      }));
+      .filter(Boolean);
 
     if (!title.trim() || !date.trim() || parsedMembers.length === 0) {
+      setError("제목, 일시, 참석자 입력은 필수입니다.");
       return;
     }
 
-    const nextMeeting: Meeting = {
-      id: crypto.randomUUID(),
-      title: title.trim(),
-      date: date.trim(),
-      place: place.trim(),
-      members: parsedMembers,
-    };
+    setIsBusy(true);
+    setError("");
 
-    setMeetings((prev) => [nextMeeting, ...prev]);
-    setTitle("");
-    setDate("");
-    setPlace("");
-    setMemberInput("");
+    try {
+      const response = await fetch("/api/meetings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: title.trim(),
+          date: date.trim(),
+          place: place.trim(),
+          members: parsedMembers,
+        }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? "모임 생성에 실패했습니다.");
+      }
+
+      setMeetings((prev) => [payload as Meeting, ...prev]);
+      setTitle("");
+      setDate("");
+      setPlace("");
+      setMemberInput("");
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setError(e.message);
+      } else {
+        setError("모임 생성에 실패했습니다.");
+      }
+    } finally {
+      setIsBusy(false);
+    }
   };
 
-  const updateStatus = (meetingId: string, memberId: string, status: Attendance) => {
-    setMeetings((prev) =>
-      prev.map((meeting) =>
-        meeting.id !== meetingId
-          ? meeting
-          : {
-              ...meeting,
-              members: meeting.members.map((member) =>
-                member.id === memberId ? { ...member, status } : member,
-              ),
-            },
-      ),
-    );
+  const updateStatus = async (meetingId: string, memberId: string, status: Attendance) => {
+    setError("");
+
+    try {
+      const response = await fetch(`/api/meetings/${meetingId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ memberId, status }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? "상태 변경 실패");
+      }
+
+      setMeetings((prev) =>
+        prev.map((meeting) =>
+          meeting.id !== meetingId
+            ? meeting
+            : {
+                ...meeting,
+                members: meeting.members.map((member) =>
+                  member.id === memberId ? { ...member, status } : member,
+                ),
+              },
+        ),
+      );
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setError(e.message);
+      } else {
+        setError("상태 변경에 실패했습니다.");
+      }
+    }
   };
 
   return (
@@ -141,11 +191,13 @@ export default function CheckinClient() {
 
               <Button
                 onClick={submitMeeting}
-                disabled={!title.trim() || !date.trim() || !memberInput.trim()}
+                disabled={!title.trim() || !date.trim() || !memberInput.trim() || isBusy}
                 className="mt-4"
               >
-                체크인 만들기
+                {isBusy ? "저장 중..." : "체크인 만들기"}
               </Button>
+
+              {error ? <p className="mt-3 rounded-md bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
             </section>
 
             <section className="grid gap-4">
