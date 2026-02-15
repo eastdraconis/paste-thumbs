@@ -184,14 +184,24 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
 
       try {
         const response = await fetch(buildApiUrl("/api/meetings", ownerToken, isSharedMode));
-        const result = (await response.json()) as Meeting[];
+        const payload = (await response.json()) as { message?: string; } | Meeting[];
 
         if (!response.ok) {
-          throw new Error("모임 목록을 불러오지 못했습니다.");
+          const message =
+            (payload as { message?: string }).message ||
+            (response.status === 401
+              ? "로그인 후 이용 가능합니다."
+              : "모임 목록을 불러오지 못했습니다.");
+          throw new Error(message);
         }
 
-        setMeetings(result);
-      } catch {
+        setMeetings(payload as Meeting[]);
+      } catch (error: unknown) {
+        if (error instanceof Error) {
+          setSubmitError(error.message || "모임 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+          return;
+        }
+
         setSubmitError("모임 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
       }
     };
