@@ -1,5 +1,5 @@
-import CheckinLoader from "./checkin-loader";
+import CheckinClient from "./checkin-client";
 
 export default function Home() {
-  return <CheckinLoader mode="personal" />;
+  return <CheckinClient mode="personal" />;
 }

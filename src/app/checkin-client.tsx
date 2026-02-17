@@ -3,14 +3,17 @@
 import Link from "next/link";
 import {
   KeyboardEvent,
-  useEffect,
+  useCallback,
   useMemo,
   useState,
 } from "react";
-import { useFieldArray, useForm } from "react-hook-form";
+import { useFieldArray, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { signOut, useSession } from "next-auth/react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import MeetingCard from "./meeting-card";
+import { fetchJson } from "@/lib/api-client";
 import { Attendance, Meeting } from "@/lib/checkin-types";
 
 type ViewMode = "personal" | "shared";
@@ -26,15 +29,6 @@ type ParsedMembers = {
 };
 
 type CheckinFormValues = z.infer<typeof checkinSchema>;
-
-
-const statusList: Attendance[] = ["참석", "불참", "보류"];
-
-const STATUS_CHIP: Record<Attendance, string> = {
-  참석: "bg-emerald-100 text-emerald-700 border-emerald-200",
-  불참: "bg-rose-100 text-rose-700 border-rose-200",
-  보류: "bg-amber-100 text-amber-700 border-amber-200",
-};
 
 
 const MAX_ATTENDEES = 50;
@@ -53,16 +47,6 @@ const checkinSchema = z.object({
     .min(1, "최소 1명 이상의 참석자를 추가해 주세요."),
 });
 
-function attendanceStats(members: Meeting["members"]) {
-  return members.reduce<Record<Attendance, number>>(
-    (acc, member) => {
-      acc[member.status] += 1;
-      return acc;
-    },
-    { 참석: 0, 불참: 0, 보류: 0 },
-  );
-}
-
 function buildApiUrl(path: string, token?: string, isSharedMode = false) {
   if (!token) {
     return path;
@@ -76,21 +60,11 @@ function formatShareUrl(shareToken: string, origin: string) {
   return `${origin}/share/${shareToken}`;
 }
 
-function formatMeetingDate(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("ko-KR", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+function meetingsKey(mode: ViewMode, ownerToken: string) {
+  return ["meetings", mode, ownerToken] as const;
 }
+
+const authProvidersKey = ["auth-providers"] as const;
 
 function parseMemberInput(value: string): ParsedMembers {
   const raw = value
@@ -120,10 +94,10 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
 
   const [memberInput, setMemberInput] = useState("");
   const [memberInputMessage, setMemberInputMessage] = useState("");
-  const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [submitError, setSubmitError] = useState("");
+  const [actionError, setActionError] = useState("");
   const [toast, setToast] = useState("");
-  const [hasGoogleProvider, setHasGoogleProvider] = useState(false);
+
+  const queryClient = useQueryClient();
 
   const {
     register,
@@ -131,7 +105,6 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     reset,
     formState: { errors, isSubmitting, isValid },
     control,
-    getValues,
   } = useForm<CheckinFormValues>({
     resolver: zodResolver(checkinSchema),
     defaultValues: {
@@ -154,61 +127,33 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
 
   const memberCount = fields.length;
 
+  const meetingsEnabled = isSharedMode || sessionStatus === "authenticated";
+  const meetingsQueryKey = meetingsKey(mode, ownerToken);
+
+  const providersQuery = useQuery({
+    queryKey: authProvidersKey,
+    queryFn: () => fetchJson<Record<string, unknown>>("/api/auth/providers"),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const meetingsQuery = useQuery({
+    queryKey: meetingsQueryKey,
+    queryFn: () => fetchJson<Meeting[]>(buildApiUrl("/api/meetings", ownerToken, isSharedMode)),
+    enabled: meetingsEnabled,
+  });
+
+  const meetings = useMemo(
+    () => (meetingsEnabled ? (meetingsQuery.data ?? []) : []),
+    [meetingsEnabled, meetingsQuery.data],
+  );
+  const hasGoogleProvider = Boolean(providersQuery.data?.google);
+  const queryErrorMessage = meetingsQuery.error instanceof Error ? meetingsQuery.error.message : "";
+  const submitError = actionError || queryErrorMessage;
+
   const allAttending = useMemo(
     () => meetings.filter((meeting) => meeting.members.every((m) => m.status === "참석")),
     [meetings],
   );
-
-  useEffect(() => {
-    const loadProviders = async () => {
-      try {
-        const response = await fetch("/api/auth/providers");
-        const providers = (await response.json()) as Record<string, unknown>;
-        setHasGoogleProvider(Boolean(providers.google));
-      } catch {
-        setHasGoogleProvider(false);
-      }
-    };
-
-    const loadMeetings = async () => {
-      if (isPersonalMode && sessionStatus === "unauthenticated") {
-        setMeetings([]);
-        return;
-      }
-
-      if (isPersonalMode && sessionStatus === "loading") {
-        return;
-      }
-
-      setSubmitError("");
-
-      try {
-        const response = await fetch(buildApiUrl("/api/meetings", ownerToken, isSharedMode));
-        const payload = (await response.json()) as { message?: string; } | Meeting[];
-
-        if (!response.ok) {
-          const message =
-            (payload as { message?: string }).message ||
-            (response.status === 401
-              ? "로그인 후 이용 가능합니다."
-              : "모임 목록을 불러오지 못했습니다.");
-          throw new Error(message);
-        }
-
-        setMeetings(payload as Meeting[]);
-      } catch (error: unknown) {
-        if (error instanceof Error) {
-          setSubmitError(error.message || "모임 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
-          return;
-        }
-
-        setSubmitError("모임 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
-      }
-    };
-
-    loadProviders();
-    loadMeetings();
-  }, [isPersonalMode, sessionStatus, ownerToken, isSharedMode]);
 
   const addMembers = (rawValue: string) => {
     const parsed = parseMemberInput(rawValue);
@@ -260,7 +205,7 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   };
 
   const getMemberInputMessage = () => {
-    if (submitError || errors.attendees?.message) {
+    if (actionError || errors.attendees?.message) {
       return errors.attendees?.message ?? "";
     }
 
@@ -271,11 +216,9 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     return memberInputMessage || `${memberCount}명 입력됨`;
   };
 
-  const submitMeeting = async (values: CheckinFormValues) => {
-    setSubmitError("");
-
-    try {
-      const response = await fetch("/api/meetings", {
+  const createMeetingMutation = useMutation({
+    mutationFn: async (values: CheckinFormValues) =>
+      fetchJson<Meeting>("/api/meetings", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -286,15 +229,44 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
           place: values.place?.trim() ?? "",
           members: values.attendees.map((member) => member.name),
         }),
+      }),
+    onMutate: async (values) => {
+      await queryClient.cancelQueries({ queryKey: meetingsQueryKey });
+
+      const previousMeetings = queryClient.getQueryData<Meeting[]>(meetingsQueryKey) ?? [];
+
+      const optimisticMeeting: Meeting = {
+        id: `temp-${Date.now()}`,
+        title: values.title.trim(),
+        date: values.date.trim(),
+        place: values.place?.trim() ?? "",
+        members: values.attendees.map((member, index) => ({
+          id: `temp-member-${index}-${Date.now()}`,
+          name: member.name,
+          status: "보류",
+        })),
+        createdAt: new Date().toISOString(),
+        shareToken: "",
+      };
+
+      queryClient.setQueryData<Meeting[]>(meetingsQueryKey, [optimisticMeeting, ...previousMeetings]);
+
+      return { previousMeetings, optimisticId: optimisticMeeting.id };
+    },
+    onError: (_error, _values, context) => {
+      if (context?.previousMeetings) {
+        queryClient.setQueryData<Meeting[]>(meetingsQueryKey, context.previousMeetings);
+      }
+    },
+    onSuccess: (created, _values, context) => {
+      queryClient.setQueryData<Meeting[]>(meetingsQueryKey, (prev) => {
+        const safePrev = prev ?? [];
+        const removedOptimistic = context?.optimisticId
+          ? safePrev.filter((meeting) => meeting.id !== context.optimisticId)
+          : safePrev;
+        return [created, ...removedOptimistic];
       });
 
-      const payload = (await response.json()) as Meeting;
-
-      if (!response.ok) {
-        throw new Error((payload as { message?: string })?.message ?? "모임 생성에 실패했습니다.");
-      }
-
-      setMeetings((prev) => [payload, ...prev]);
       reset({ title: "", date: "", place: "", attendees: [] });
       replace([]);
       setMemberInput("");
@@ -303,14 +275,24 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
       setTimeout(() => {
         setToast("");
       }, 2200);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: meetingsQueryKey });
+    },
+  });
+
+  const submitMeeting = useCallback(async (values: CheckinFormValues) => {
+    setActionError("");
+    try {
+      await createMeetingMutation.mutateAsync(values);
     } catch (e: unknown) {
       if (e instanceof Error) {
-        setSubmitError(e.message);
+        setActionError(e.message);
       } else {
-        setSubmitError("모임 생성에 실패했습니다.");
+        setActionError("모임 생성에 실패했습니다.");
       }
     }
-  };
+  }, [createMeetingMutation]);
 
   const handleMemberKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -324,28 +306,27 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
     replace([]);
     setMemberInput("");
     setMemberInputMessage("");
-    setSubmitError("");
+    setActionError("");
   };
+
+  const [watchTitle, watchDate, watchPlace] = useWatch({
+    control,
+    name: ["title", "date", "place"],
+  });
 
   const isFormDirty = useMemo(
     () =>
-      getValues("title").trim().length > 0 ||
-      getValues("date").trim().length > 0 ||
-      (getValues("place") ?? "").trim().length > 0 ||
+      (watchTitle ?? "").trim().length > 0 ||
+      (watchDate ?? "").trim().length > 0 ||
+      (watchPlace ?? "").trim().length > 0 ||
       memberInput.trim().length > 0 ||
       memberCount > 0,
-    [getValues, memberInput, memberCount],
+    [watchTitle, watchDate, watchPlace, memberInput, memberCount],
   );
 
-  const updateStatus = async (meetingId: string, memberId: string, status: Attendance) => {
-    if (!canEdit) {
-      return;
-    }
-
-    setSubmitError("");
-
-    try {
-      const response = await fetch(buildApiUrl(`/api/meetings/${meetingId}`, ownerToken, isSharedMode), {
+  const updateStatusMutation = useMutation({
+    mutationFn: async ({ meetingId, memberId, status }: { meetingId: string; memberId: string; status: Attendance }) => {
+      await fetchJson<Meeting>(buildApiUrl(`/api/meetings/${meetingId}`, ownerToken, isSharedMode), {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -353,14 +334,15 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
         body: JSON.stringify({ memberId, status }),
       });
 
-      const payload = (await response.json()) as Meeting;
+      return { meetingId, memberId, status };
+    },
+    onMutate: async ({ meetingId, memberId, status }) => {
+      await queryClient.cancelQueries({ queryKey: meetingsQueryKey });
 
-      if (!response.ok) {
-        throw new Error((payload as { message?: string })?.message ?? "상태 변경 실패");
-      }
+      const previousMeetings = queryClient.getQueryData<Meeting[]>(meetingsQueryKey) ?? [];
 
-      setMeetings((prev) =>
-        prev.map((meeting) =>
+      queryClient.setQueryData<Meeting[]>(meetingsQueryKey,
+        previousMeetings.map((meeting) =>
           meeting.id !== meetingId
             ? meeting
             : {
@@ -371,16 +353,38 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
               },
         ),
       );
+
+      return { previousMeetings };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousMeetings) {
+        queryClient.setQueryData<Meeting[]>(meetingsQueryKey, context.previousMeetings);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: meetingsQueryKey });
+    },
+  });
+
+  const updateStatus = useCallback(async (meetingId: string, memberId: string, status: Attendance) => {
+    if (!canEdit) {
+      return;
+    }
+
+    setActionError("");
+
+    try {
+      await updateStatusMutation.mutateAsync({ meetingId, memberId, status });
     } catch (e: unknown) {
       if (e instanceof Error) {
-        setSubmitError(e.message);
+        setActionError(e.message);
       } else {
-        setSubmitError("상태 변경에 실패했습니다.");
+        setActionError("상태 변경에 실패했습니다.");
       }
     }
-  };
+  }, [canEdit, updateStatusMutation]);
 
-  const copyShareLink = async (shareToken: string, label: string) => {
+  const copyShareLink = useCallback(async (shareToken: string, label: string) => {
     if (typeof window === "undefined") {
       return;
     }
@@ -399,7 +403,9 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
         setToast("");
       }, 1800);
     }
-  };
+  }, []);
+
+  const isCreating = isSubmitting || createMeetingMutation.isPending;
 
   const inputClass =
     "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100";
@@ -555,16 +561,16 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
               <div className="flex flex-wrap gap-2">
                 <button
                   type="submit"
-                  disabled={isSubmitting || !isValid}
+                  disabled={isCreating || !isValid}
                   className="rounded-full bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isSubmitting ? "저장 중..." : "체크인 만들기"}
+                  {isCreating ? "저장 중..." : "체크인 만들기"}
                 </button>
 
                 <button
                   type="button"
                   onClick={resetDraft}
-                  disabled={!isFormDirty || isSubmitting}
+                  disabled={!isFormDirty || isCreating}
                   className="rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   입력 초기화
@@ -577,7 +583,11 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
         {submitError ? <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">{submitError}</p> : null}
 
         <section className="grid gap-4">
-          {meetings.length === 0 ? (
+          {meetingsQuery.isLoading ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <p className="text-sm text-slate-500">체크인 목록을 불러오는 중...</p>
+            </div>
+          ) : meetings.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
               <p className="text-sm text-slate-500">
                 {isPersonalMode
@@ -586,68 +596,15 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
               </p>
             </div>
           ) : (
-            meetings.map((meeting) => {
-              const stats = attendanceStats(meeting.members);
-
-              return (
-                <div key={meeting.id} className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                    <span className="rounded-full bg-slate-100 px-2 py-1">{formatMeetingDate(meeting.date)}</span>
-                    {meeting.place ? <span className="rounded-full bg-slate-100 px-2 py-1">{meeting.place}</span> : null}
-                    <span className="rounded-full bg-slate-100 px-2 py-1">총 {meeting.members.length}명</span>
-                  </div>
-
-                  <h3 className="mb-2 text-lg font-semibold text-slate-900">{meeting.title}</h3>
-                  {meeting.shareToken ? (
-                    <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => copyShareLink(meeting.shareToken, meeting.title)}
-                        className="rounded-full bg-emerald-600 px-3 py-1 font-medium text-white transition hover:bg-emerald-700"
-                      >
-                        체크인 링크 복사
-                      </button>
-                    </div>
-                  ) : null}
-
-                  <div className="mb-3 flex flex-wrap gap-2 text-xs">
-                    <span className="rounded-full border border-emerald-300 px-2 py-1 font-medium text-emerald-700">참석 {stats.참석}명</span>
-                    <span className="rounded-full border border-rose-300 px-2 py-1 font-medium text-rose-700">불참 {stats.불참}명</span>
-                    <span className="rounded-full border border-amber-300 px-2 py-1 font-medium text-amber-700">보류 {stats.보류}명</span>
-                  </div>
-
-                  <div className="space-y-2.5">
-                    {meeting.members.map((member) => (
-                      <div
-                        key={member.id}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3"
-                      >
-                        <p className="font-medium text-slate-800">{member.name}</p>
-                        <div className="flex flex-wrap gap-2">
-                          {statusList.map((status) => (
-                            <button
-                              key={status}
-                              type="button"
-                              onClick={() => updateStatus(meeting.id, member.id, status)}
-                              className={`rounded-full border px-3 py-1 text-sm transition ${
-                                member.status === status
-                                  ? "bg-slate-900 text-white border-slate-900"
-                                  : "text-slate-600 border-slate-300 hover:bg-slate-100"
-                              }`}
-                            >
-                              {status}
-                            </button>
-                          ))}
-                        </div>
-                        <span className={`ml-auto rounded-full border px-2 py-1 text-xs font-semibold ${STATUS_CHIP[member.status]}`}>
-                          현재: {member.status}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })
+            meetings.map((meeting) => (
+              <MeetingCard
+                key={meeting.id}
+                meeting={meeting}
+                canEdit={canEdit}
+                onCopyShareLink={copyShareLink}
+                onUpdateStatus={updateStatus}
+              />
+            ))
           )}
         </section>
 
