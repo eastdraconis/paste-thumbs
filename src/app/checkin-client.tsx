@@ -13,10 +13,15 @@ import { z } from "zod";
 import { signOut, useSession } from "next-auth/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import MeetingCard from "./meeting-card";
-import { fetchJson } from "@/lib/api-client";
 import { Attendance, Meeting } from "@/lib/checkin-types";
-
-type ViewMode = "personal" | "shared";
+import {
+  createMeeting,
+  fetchAuthProviders,
+  fetchMeetings,
+  updateMeetingStatus,
+} from "@/lib/checkin-fetcher";
+import { checkinQueryKeys } from "@/lib/checkin-queries";
+import { ViewMode } from "@/lib/checkin-query-types";
 
 type CheckinClientProps = {
   mode?: ViewMode;
@@ -47,24 +52,9 @@ const checkinSchema = z.object({
     .min(1, "최소 1명 이상의 참석자를 추가해 주세요."),
 });
 
-function buildApiUrl(path: string, token?: string, isSharedMode = false) {
-  if (!token) {
-    return path;
-  }
-
-  const queryKey = isSharedMode ? "meetingToken" : "ownerToken";
-  return `${path}?${queryKey}=${encodeURIComponent(token)}`;
-}
-
 function formatShareUrl(shareToken: string, origin: string) {
   return `${origin}/share/${shareToken}`;
 }
-
-function meetingsKey(mode: ViewMode, ownerToken: string) {
-  return ["meetings", mode, ownerToken] as const;
-}
-
-const authProvidersKey = ["auth-providers"] as const;
 
 function parseMemberInput(value: string): ParsedMembers {
   const raw = value
@@ -128,17 +118,17 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
   const memberCount = fields.length;
 
   const meetingsEnabled = isSharedMode || sessionStatus === "authenticated";
-  const meetingsQueryKey = meetingsKey(mode, ownerToken);
+  const meetingsQueryKey = checkinQueryKeys.meetings(mode, ownerToken);
 
   const providersQuery = useQuery({
-    queryKey: authProvidersKey,
-    queryFn: () => fetchJson<Record<string, unknown>>("/api/auth/providers"),
+    queryKey: checkinQueryKeys.authProviders,
+    queryFn: fetchAuthProviders,
     staleTime: 5 * 60 * 1000,
   });
 
   const meetingsQuery = useQuery({
     queryKey: meetingsQueryKey,
-    queryFn: () => fetchJson<Meeting[]>(buildApiUrl("/api/meetings", ownerToken, isSharedMode)),
+    queryFn: () => fetchMeetings({ ownerToken, isSharedMode }),
     enabled: meetingsEnabled,
   });
 
@@ -218,17 +208,11 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
 
   const createMeetingMutation = useMutation({
     mutationFn: async (values: CheckinFormValues) =>
-      fetchJson<Meeting>("/api/meetings", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title: values.title.trim(),
-          date: values.date.trim(),
-          place: values.place?.trim() ?? "",
-          members: values.attendees.map((member) => member.name),
-        }),
+      createMeeting({
+        title: values.title.trim(),
+        date: values.date.trim(),
+        place: values.place?.trim() ?? "",
+        members: values.attendees.map((member) => member.name),
       }),
     onMutate: async (values) => {
       await queryClient.cancelQueries({ queryKey: meetingsQueryKey });
@@ -326,12 +310,12 @@ export default function CheckinClient({ mode = "personal", ownerToken = "" }: Ch
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ meetingId, memberId, status }: { meetingId: string; memberId: string; status: Attendance }) => {
-      await fetchJson<Meeting>(buildApiUrl(`/api/meetings/${meetingId}`, ownerToken, isSharedMode), {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ memberId, status }),
+      await updateMeetingStatus({
+        meetingId,
+        memberId,
+        status,
+        ownerToken,
+        isSharedMode,
       });
 
       return { meetingId, memberId, status };
